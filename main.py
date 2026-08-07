@@ -240,3 +240,10 @@ async def admin_add_project(message: types.Message):
         await message.answer(
             "✅ Loyiha saqlandi"
         )
+async def main():
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
