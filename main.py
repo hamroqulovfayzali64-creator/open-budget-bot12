@@ -86,3 +86,46 @@ async def ru_language(message: types.Message):
         TEXTS["ru"]["select_project"],
         reply_markup=user_keyboard_ru
     )
+@dp.message(lambda message: message.text in ["📌 Loyihalar", "📌 Проекты"])
+async def show_projects(message: types.Message):
+
+    lang = await get_language(message.from_user.id)
+
+    cursor.execute(
+        "SELECT id, name_uz, name_ru, url FROM projects"
+    )
+
+    projects = cursor.fetchall()
+
+    if not projects:
+        await message.answer(
+            TEXTS[lang]["no_project"]
+        )
+        return
+
+
+    for project in projects:
+
+        project_id, name_uz, name_ru, url = project
+
+        name = name_uz if lang == "uz" else name_ru
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET project_clicks = project_clicks + 1
+            WHERE user_id=?
+            """,
+            (message.from_user.id,)
+        )
+        db.commit()
+
+
+        if url:
+            await message.answer(
+                f"📌 {name}\n🔗 {url}"
+            )
+        else:
+            await message.answer(
+                f"📌 {name}\n{TEXTS[lang]['no_link']}"
+            )
