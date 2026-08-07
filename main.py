@@ -115,3 +115,43 @@ async def set_lang(user_id, lang):
     )
 
     db.commit()
+@dp.message(Command("start"))
+async def start(message: types.Message):
+
+    await save_user(message.from_user.id)
+
+    await message.answer(
+        "Tilni tanlang:",
+        reply_markup=lang_menu
+    )
+
+
+@dp.message(lambda m: m.text == "🇺🇿 O'zbek")
+async def uz(message: types.Message):
+
+    await set_lang(message.from_user.id, "uz")
+
+    await message.answer(
+        "📌 Loyihalar bo'limi",
+        reply_markup=uz_menu
+    )
+
+
+@dp.message(lambda m: m.text == "🇷🇺 Русский")
+async def ru(message: types.Message):
+
+    await set_lang(message.from_user.id, "ru")
+
+    await message.answer(
+        "📌 Раздел проектов",
+        reply_markup=ru_menu
+    )
+
+
+async def main():
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
