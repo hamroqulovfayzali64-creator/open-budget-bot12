@@ -88,6 +88,10 @@ uz_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="🔄 Loyihani almashtirish")
+        ],
+        [
+            KeyboardButton(text="📰 Yangiliklar"),
+            KeyboardButton(text="❓ Yordam")
         ]
     ],
     resize_keyboard=True
@@ -101,6 +105,10 @@ ru_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="🔄 Сменить проект")
+        ],
+        [
+            KeyboardButton(text="📰 Новости"),
+            KeyboardButton(text="❓ Помощь")
         ]
     ],
     resize_keyboard=True
@@ -263,67 +271,44 @@ async def show_projects(message: types.Message):
             f"📌 {name}",
             reply_markup=keyboard
         )
-@dp.message(Command("admin"))
-async def admin(message: types.Message):
-
-    if message.from_user.id not in ADMINS:
-        await message.answer("❌ Ruxsat yo‘q")
-        return
-
+@dp.message(
+    lambda m: m.text in ["📰 Yangiliklar", "📰 Новости"]
+)
+async def news(message: types.Message):
 
     await message.answer(
-        "👨‍💼 Admin panel",
-        reply_markup=admin_keyboard
+        "📰 Yangiliklar\n\n"
+        "Hozircha yangiliklar mavjud emas."
     )
 
 
+@dp.message(
+    lambda m: m.text in ["❓ Yordam", "❓ Помощь"]
+)
+async def help_message(message: types.Message):
 
-@dp.message(lambda m: m.text == "➕ Loyiha qo'shish")
-async def add_project_start(message: types.Message):
+    lang = await get_language(message.from_user.id)
 
-    if message.from_user.id not in ADMINS:
-        return
+    if lang == "ru":
+        text = (
+            "❓ Помощь\n\n"
+            "1️⃣ Выберите проект.\n"
+            "2️⃣ Нажмите кнопку официального голосования.\n"
+            "3️⃣ Пройдите подтверждение на официальном сайте.\n\n"
+            "Если хотите выбрать другой проект, нажмите "
+            "«🔄 Сменить проект»."
+        )
+    else:
+        text = (
+            "❓ Yordam\n\n"
+            "1️⃣ Loyihani tanlang.\n"
+            "2️⃣ Rasmiy ovoz berish tugmasini bosing.\n"
+            "3️⃣ Tasdiqlashni rasmiy saytda bajaring.\n\n"
+            "Boshqa loyiha tanlash uchun "
+            "«🔄 Loyihani almashtirish» tugmasini bosing."
+        )
 
-
-    state[message.from_user.id] = "name"
-
-
-    await message.answer(
-        "Loyiha nomini yuboring:"
-    )
-
-
-
-@dp.message(lambda m: m.text == "📊 Statistika")
-async def statistics(message: types.Message):
-
-    if message.from_user.id not in ADMINS:
-        return
-
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM users"
-    )
-
-    users = cursor.fetchone()[0]
-
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM projects"
-    )
-
-    projects = cursor.fetchone()[0]
-
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM votes"
-    )
-
-    votes = cursor.fetchone()[0]
-
-
-    await message.answer(
-        f"""
+    await message.answer(text)
 📊 Statistika
 
 👥 Foydalanuvchilar: {users}
