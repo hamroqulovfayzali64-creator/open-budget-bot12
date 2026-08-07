@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS projects(
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS votes(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    project_id INTEGER,
+    phone TEXT,
+    date TEXT
+)
+""")
+
 db.commit()
 
 
