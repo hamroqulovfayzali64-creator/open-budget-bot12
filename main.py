@@ -11,6 +11,7 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
+
 TOKEN = "8615736731:AAFImAWTDRhBJAyOhXbY6D0wwysIa0Boz1c"
 
 ADMINS = [
@@ -31,7 +32,9 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
     user_id INTEGER PRIMARY KEY,
     language TEXT DEFAULT 'uz',
-    date TEXT
+    joined TEXT,
+    project_views INTEGER DEFAULT 0,
+    vote_clicks INTEGER DEFAULT 0
 )
 """)
 
@@ -39,11 +42,11 @@ CREATE TABLE IF NOT EXISTS users(
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS projects(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    url TEXT
+    name_uz TEXT,
+    name_ru TEXT,
+    link TEXT
 )
 """)
-
 
 db.commit()
 
@@ -51,7 +54,7 @@ db.commit()
 state = {}
 
 
-lang_menu = ReplyKeyboardMarkup(
+language_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="🇺🇿 O'zbek"),
@@ -62,7 +65,7 @@ lang_menu = ReplyKeyboardMarkup(
 )
 
 
-uz_menu = ReplyKeyboardMarkup(
+uz_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📌 Loyihalar")
@@ -72,7 +75,7 @@ uz_menu = ReplyKeyboardMarkup(
 )
 
 
-ru_menu = ReplyKeyboardMarkup(
+ru_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📌 Проекты")
@@ -82,10 +85,12 @@ ru_menu = ReplyKeyboardMarkup(
 )
 
 
-admin_menu = ReplyKeyboardMarkup(
+admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="➕ Loyiha qo'shish"),
+            KeyboardButton(text="➕ Loyiha qo'shish")
+        ],
+        [
             KeyboardButton(text="📊 Statistika")
         ]
     ],
@@ -96,62 +101,14 @@ admin_menu = ReplyKeyboardMarkup(
 async def save_user(user_id):
 
     cursor.execute(
-        "INSERT OR IGNORE INTO users VALUES(?,?,?)",
+        """
+        INSERT OR IGNORE INTO users(user_id, joined)
+        VALUES (?,?)
+        """,
         (
             user_id,
-            "uz",
             datetime.now().strftime("%Y-%m-%d")
         )
     )
 
     db.commit()
-
-
-async def set_lang(user_id, lang):
-
-    cursor.execute(
-        "UPDATE users SET language=? WHERE user_id=?",
-        (lang, user_id)
-    )
-
-    db.commit()
-@dp.message(Command("start"))
-async def start(message: types.Message):
-
-    await save_user(message.from_user.id)
-
-    await message.answer(
-        "Tilni tanlang:",
-        reply_markup=lang_menu
-    )
-
-
-@dp.message(lambda m: m.text == "🇺🇿 O'zbek")
-async def uz(message: types.Message):
-
-    await set_lang(message.from_user.id, "uz")
-
-    await message.answer(
-        "📌 Loyihalar bo'limi",
-        reply_markup=uz_menu
-    )
-
-
-@dp.message(lambda m: m.text == "🇷🇺 Русский")
-async def ru(message: types.Message):
-
-    await set_lang(message.from_user.id, "ru")
-
-    await message.answer(
-        "📌 Раздел проектов",
-        reply_markup=ru_menu
-    )
-
-
-async def main():
-
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
