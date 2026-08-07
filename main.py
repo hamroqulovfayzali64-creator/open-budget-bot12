@@ -108,6 +108,31 @@ admin_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
+admin_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="➕ Loyiha qo'shish")
+        ],
+        [
+            KeyboardButton(text="📊 Statistika")
+        ]
+    ],
+    resize_keyboard=True
+)
+
+
+phone_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(
+                text="📱 Telefon raqamni yuborish",
+                request_contact=True
+            )
+        ]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True
+)
 
 
 async def save_user(user_id):
