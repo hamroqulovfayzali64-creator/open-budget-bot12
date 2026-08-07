@@ -253,11 +253,23 @@ async def projects(message: types.Message):
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🗳 Ovoz berish",
-                            url=link
-                        )
+                    
+keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🌐 Havola orqali ovoz berish",
+                url=link
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📱 Telefon bilan ovoz berish",
+                callback_data=f"vote_{pid}"
+            )
+        ]
+    ]
+)
                     ]
                 ]
             )
