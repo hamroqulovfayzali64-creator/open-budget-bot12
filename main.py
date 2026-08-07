@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import os
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -10,7 +11,7 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
-TOKEN="8615736731:AAFImAWTDRhBJAyOhXbY6D0wwysIa0Boz1c"
+TOKEN = os.getenv("BOT_TOKEN")
 
 ADMINLAR = [7998053914, 1599812727]
 
@@ -22,7 +23,8 @@ cursor = db.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
-    user_id INTEGER PRIMARY KEY
+    user_id INTEGER PRIMARY KEY,
+    til TEXT DEFAULT 'uz'
 )
 """)
 
@@ -48,7 +50,7 @@ if cursor.fetchone() is None:
 admin_state = {}
 
 
-til = ReplyKeyboardMarkup(
+til_menu = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="🇺🇿 O'zbek tili"),
@@ -59,11 +61,16 @@ til = ReplyKeyboardMarkup(
 )
 
 
-menu = ReplyKeyboardMarkup(
+menu_uz = ReplyKeyboardMarkup(
     keyboard=[
-        [
-            KeyboardButton(text="📌 1-loyiha")
-        ]
+        [KeyboardButton(text="📌 1-loyiha")]
+    ],
+    resize_keyboard=True
+)
+
+menu_ru = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📌 1-проект")]
     ],
     resize_keyboard=True
 )
@@ -80,21 +87,19 @@ admin_menu = ReplyKeyboardMarkup(
 )
 
 
-
 @dp.message(Command("start"))
 async def start(message: types.Message):
 
     cursor.execute(
-        "INSERT OR IGNORE INTO users VALUES (?)",
+        "INSERT OR IGNORE INTO users(user_id) VALUES(?)",
         (message.from_user.id,)
     )
     db.commit()
 
     await message.answer(
-        "Tilni tanlang:",
-        reply_markup=til
+        "Tilni tanlang / Выберите язык:",
+        reply_markup=til_menu
     )
-
 
 
 @dp.message(Command("admin"))
@@ -109,68 +114,50 @@ async def admin(message: types.Message):
         await message.answer("Ruxsat yo'q ❌")
 
 
-
 @dp.message()
 async def handler(message: types.Message):
 
     uid = message.from_user.id
+    text = message.text
 
 
-    if uid in admin_state:
+    if text == "🇺🇿 O'zbek tili":
 
-        if admin_state[uid] == "nom":
-
-            cursor.execute(
-                "UPDATE loyiha SET nomi=? WHERE id=1",
-                (message.text,)
-            )
-            db.commit()
-
-            admin_state[uid] = "link"
-
-            await message.answer(
-                "Endi loyiha havolasini yuboring:"
-            )
-            return
-
-
-        elif admin_state[uid] == "link":
-
-            cursor.execute(
-                "UPDATE loyiha SET havola=? WHERE id=1",
-                (message.text,)
-            )
-            db.commit()
-
-            del admin_state[uid]
-
-            await message.answer(
-                "✅ Loyiha saqlandi",
-                reply_markup=admin_menu
-            )
-            return
-
-
-
-    if message.text in [
-        "🇺🇿 O'zbek tili",
-        "🇷🇺 Русский язык"
-    ]:
+        cursor.execute(
+            "UPDATE users SET til='uz' WHERE user_id=?",
+            (uid,)
+        )
+        db.commit()
 
         await message.answer(
             "Loyihani tanlang:",
-            reply_markup=menu
+            reply_markup=menu_uz
         )
+        return
 
 
-    elif message.text == "📌 1-loyiha":
+    if text == "🇷🇺 Русский язык":
+
+        cursor.execute(
+            "UPDATE users SET til='ru' WHERE user_id=?",
+            (uid,)
+        )
+        db.commit()
+
+        await message.answer(
+            "Выберите проект:",
+            reply_markup=menu_ru
+        )
+        return
+
+
+    if text in ["📌 1-loyiha", "📌 1-проект"]:
 
         cursor.execute(
             "SELECT nomi,havola FROM loyiha WHERE id=1"
         )
 
         loyiha = cursor.fetchone()
-
 
         if loyiha[1].startswith("http"):
 
@@ -192,23 +179,25 @@ async def handler(message: types.Message):
 
         else:
             await message.answer(
-                f"📌 {loyiha[0]}\n"
-                "🔗 Havola hali qo'shilmagan"
+                f"📌 {loyiha[0]}\n🔗 Havola hali qo'shilmagan"
             )
 
+        return
 
-    elif message.text == "➕ Loyiha qo'shish":
+
+    if text == "➕ Loyiha qo'shish":
 
         if uid in ADMINLAR:
-
             admin_state[uid] = "nom"
 
             await message.answer(
                 "Loyiha nomini yuboring:"
             )
 
+        return
 
-    elif message.text == "📊 Statistika":
+
+    if text == "📊 Statistika":
 
         if uid in ADMINLAR:
 
@@ -222,9 +211,11 @@ async def handler(message: types.Message):
                 f"📊 Foydalanuvchilar: {son} ta"
             )
 
+        return
 
 
 async def main():
+
     await dp.start_polling(bot)
 
 
