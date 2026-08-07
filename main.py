@@ -419,6 +419,19 @@ async def main():
     await dp.start_polling(bot)
 
 
+@dp.message(lambda message: message.contact is not None)
+async def get_phone(message: types.Message):
+    phone = message.contact.phone_number
+    user_id = message.from_user.id
 
+    # qolgan kodlar...
+
+
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 if __name__ == "__main__":
     asyncio.run(main())
