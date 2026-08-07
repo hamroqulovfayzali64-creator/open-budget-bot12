@@ -129,3 +129,50 @@ async def show_projects(message: types.Message):
             await message.answer(
                 f"📌 {name}\n{TEXTS[lang]['no_link']}"
             )
+@dp.message(Command("admin"))
+async def admin(message: types.Message):
+
+    if message.from_user.id in ADMINS:
+
+        await message.answer(
+            TEXTS["uz"]["admin_panel"],
+            reply_markup=admin_keyboard
+        )
+
+    else:
+        await message.answer("❌ Ruxsat yo'q")
+
+
+@dp.message(lambda message: message.text == "📊 Statistika")
+async def statistics(message: types.Message):
+
+    if message.from_user.id not in ADMINS:
+        return
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
+    users = cursor.fetchone()[0]
+
+
+    cursor.execute(
+        "SELECT SUM(project_clicks), SUM(vote_clicks) FROM users"
+    )
+
+    clicks = cursor.fetchone()
+
+    project_clicks = clicks[0] or 0
+    vote_clicks = clicks[1] or 0
+
+
+    await message.answer(
+        f"""
+📊 BOT STATISTIKASI
+
+👥 Foydalanuvchilar: {users}
+
+📌 Loyiha ko‘rilishi: {project_clicks}
+
+🗳 Ovoz berish bosilishi: {vote_clicks}
+"""
+    )
