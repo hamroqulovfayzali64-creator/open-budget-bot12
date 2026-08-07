@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from datetime import datetime
+import os
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -12,7 +13,10 @@ from aiogram.types import (
 )
 
 
-TOKEN = "8615736731:AAEYW7RCc-YeGPI3mrod2dkyxeYR7QbRqOA"
+TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN topilmadi")
 
 ADMINS = [
     7998053914,
