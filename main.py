@@ -55,3 +55,34 @@ async def set_language(user_id, language):
         (language, user_id)
     )
     db.commit()
+@dp.message(Command("start"))
+async def start(message: types.Message):
+
+    await save_user(message.from_user.id)
+
+    await message.answer(
+        TEXTS["uz"]["select_language"],
+        reply_markup=language_keyboard
+    )
+
+
+@dp.message(lambda message: message.text == "🇺🇿 O'zbek")
+async def uz_language(message: types.Message):
+
+    await set_language(message.from_user.id, "uz")
+
+    await message.answer(
+        TEXTS["uz"]["select_project"],
+        reply_markup=user_keyboard_uz
+    )
+
+
+@dp.message(lambda message: message.text == "🇷🇺 Русский")
+async def ru_language(message: types.Message):
+
+    await set_language(message.from_user.id, "ru")
+
+    await message.answer(
+        TEXTS["ru"]["select_project"],
+        reply_markup=user_keyboard_ru
+    )
