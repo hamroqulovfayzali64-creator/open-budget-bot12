@@ -110,9 +110,7 @@ async def set_language(user_id, lang):
         WHERE user_id=?
         """,
         (lang, user_id)
-    )
-
-    db.commit()@dp.message(Command("start"))
+    ) db.commit()@dp.message(Command("start"))
 async def start(message: types.Message):
 
     await save_user(message.from_user.id)
