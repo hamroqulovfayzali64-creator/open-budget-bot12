@@ -251,8 +251,7 @@ async def projects(message: types.Message):
 
         if link:
 
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
+
                     
 keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
