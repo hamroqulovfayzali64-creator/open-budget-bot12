@@ -176,3 +176,67 @@ async def statistics(message: types.Message):
 🗳 Ovoz berish bosilishi: {vote_clicks}
 """
     )
+@dp.message(lambda message: message.text == "➕ Loyiha qo'shish")
+async def add_project_start(message: types.Message):
+
+    if message.from_user.id not in ADMINS:
+        return
+
+    admin_state[message.from_user.id] = "project_name"
+
+    await message.answer(
+        "Loyiha nomini yuboring:"
+    )
+
+
+@dp.message()
+async def admin_add_project(message: types.Message):
+
+    uid = message.from_user.id
+
+    if uid not in admin_state:
+        return
+
+
+    if admin_state[uid] == "project_name":
+
+        cursor.execute(
+            """
+            INSERT INTO projects(name_uz, name_ru, url)
+            VALUES(?,?,?)
+            """,
+            (
+                message.text,
+                message.text,
+                ""
+            )
+        )
+
+        db.commit()
+
+        admin_state[uid] = "project_url"
+
+        await message.answer(
+            "Endi loyiha havolasini yuboring:"
+        )
+        return
+
+
+    if admin_state[uid] == "project_url":
+
+        cursor.execute(
+            """
+            UPDATE projects
+            SET url=?
+            WHERE id=(SELECT MAX(id) FROM projects)
+            """,
+            (message.text,)
+        )
+
+        db.commit()
+
+        del admin_state[uid]
+
+        await message.answer(
+            "✅ Loyiha saqlandi"
+        )
