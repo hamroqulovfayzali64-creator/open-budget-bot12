@@ -162,3 +162,94 @@ async def get_language(user_id):
         return result[0]
 
     return "uz"
+@dp.message(Command("start"))
+async def start(message: types.Message):
+
+    await save_user(message.from_user.id)
+
+    await message.answer(
+        "Tilni tanlang:",
+        reply_markup=language_keyboard
+    )
+
+
+@dp.message(lambda m: m.text == "🇺🇿 O'zbek")
+async def uz_lang(message: types.Message):
+
+    await set_language(
+        message.from_user.id,
+        "uz"
+    )
+
+    await message.answer(
+        "Bo‘limni tanlang:",
+        reply_markup=uz_keyboard
+    )
+
+
+@dp.message(lambda m: m.text == "🇷🇺 Русский")
+async def ru_lang(message: types.Message):
+
+    await set_language(
+        message.from_user.id,
+        "ru"
+    )
+
+    await message.answer(
+        "Выберите раздел:",
+        reply_markup=ru_keyboard
+    )
+
+
+@dp.message(lambda m: m.text in ["📌 Loyihalar", "📌 Проекты"])
+async def show_projects(message: types.Message):
+
+    lang = await get_language(
+        message.from_user.id
+    )
+
+    cursor.execute(
+        "SELECT id,name_uz,name_ru,link FROM projects"
+    )
+
+    projects = cursor.fetchall()
+
+
+    if not projects:
+
+        await message.answer(
+            "Hozircha loyiha yo‘q"
+        )
+
+        return
+
+
+    for project in projects:
+
+        pid, name_uz, name_ru, link = project
+
+        name = name_uz if lang == "uz" else name_ru
+
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🌐 Havola orqali ovoz berish",
+                        url=link
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📱 Telefon bilan ovoz berish",
+                        callback_data=f"vote_{pid}"
+                    )
+                ]
+            ]
+        )
+
+
+        await message.answer(
+            f"📌 {name}",
+            reply_markup=keyboard
+        )
