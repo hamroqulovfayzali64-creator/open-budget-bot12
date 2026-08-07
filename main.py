@@ -253,3 +253,133 @@ async def show_projects(message: types.Message):
             f"📌 {name}",
             reply_markup=keyboard
         )
+@dp.message(Command("admin"))
+async def admin(message: types.Message):
+
+    if message.from_user.id not in ADMINS:
+        await message.answer("❌ Ruxsat yo‘q")
+        return
+
+
+    await message.answer(
+        "👨‍💼 Admin panel",
+        reply_markup=admin_keyboard
+    )
+
+
+
+@dp.message(lambda m: m.text == "➕ Loyiha qo'shish")
+async def add_project_start(message: types.Message):
+
+    if message.from_user.id not in ADMINS:
+        return
+
+
+    state[message.from_user.id] = "name"
+
+
+    await message.answer(
+        "Loyiha nomini yuboring:"
+    )
+
+
+
+@dp.message(lambda m: m.text == "📊 Statistika")
+async def statistics(message: types.Message):
+
+    if message.from_user.id not in ADMINS:
+        return
+
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
+
+    users = cursor.fetchone()[0]
+
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM projects"
+    )
+
+    projects = cursor.fetchone()[0]
+
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM votes"
+    )
+
+    votes = cursor.fetchone()[0]
+
+
+    await message.answer(
+        f"""
+📊 Statistika
+
+👥 Foydalanuvchilar: {users}
+
+📌 Loyihalar: {projects}
+
+🗳 Ovozlar: {votes}
+"""
+    )
+
+
+
+@dp.message()
+async def project_add_process(message: types.Message):
+
+    uid = message.from_user.id
+
+
+    if uid not in state:
+        return
+
+
+    if state[uid] == "name":
+
+        cursor.execute(
+            """
+            INSERT INTO projects(name_uz,name_ru,link)
+            VALUES(?,?,?)
+            """,
+            (
+                message.text,
+                message.text,
+                ""
+            )
+        )
+
+        db.commit()
+
+
+        state[uid] = "link"
+
+
+        await message.answer(
+            "Endi loyiha havolasini yuboring:"
+        )
+
+        return
+
+
+    if state[uid] == "link":
+
+        cursor.execute(
+            """
+            UPDATE projects
+            SET link=?
+            WHERE id=(SELECT MAX(id) FROM projects)
+            """,
+            (message.text,)
+        )
+
+        db.commit()
+
+
+        del state[uid]
+
+
+        await message.answer(
+            "✅ Loyiha saqlandi"
+        )
