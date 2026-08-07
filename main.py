@@ -476,3 +476,9 @@ async def get_phone(message: types.Message):
     await message.answer(
         "✅ Ovoz qabul qilindi. Rahmat!"
     )
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
