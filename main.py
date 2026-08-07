@@ -85,6 +85,9 @@ uz_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📌 Loyihalar")
+        ],
+        [
+            KeyboardButton(text="🔄 Loyihani almashtirish")
         ]
     ],
     resize_keyboard=True
@@ -95,6 +98,9 @@ ru_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📌 Проекты")
+        ],
+        [
+            KeyboardButton(text="🔄 Сменить проект")
         ]
     ],
     resize_keyboard=True
