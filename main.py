@@ -251,39 +251,33 @@ async def projects(message: types.Message):
 
         if link:
 
-
-                    
-keyboard = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🌐 Havola orqali ovoz berish",
-                url=link
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📱 Telefon bilan ovoz berish",
-                callback_data=f"vote_{pid}"
-            )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Havola orqali ovoz berish",
+                    url=link
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📱 Telefon bilan ovoz berish",
+                    callback_data=f"vote_{pid}"
+                )
+            ]
         ]
-    ]
-)
-                    
-              
-            
+    )
 
+    await message.answer(
+        f"📌 {name}",
+        reply_markup=keyboard
+    )
 
-            await message.answer(
-                f"📌 {name}",
-                reply_markup=keyboard
-            )
+else:
 
-        else:
-
-            await message.answer(
-                f"📌 {name}\n🔗 Havola yo‘q"
-            )
+    await message.answer(
+        f"📌 {name}\n🔗 Havola yo‘q"
+    )
 
 
 
