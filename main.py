@@ -383,3 +383,92 @@ async def project_add_process(message: types.Message):
         await message.answer(
             "✅ Loyiha saqlandi"
         )
+@dp.callback_query(lambda c: c.data.startswith("vote_"))
+async def vote_start(callback: types.CallbackQuery):
+
+    project_id = callback.data.split("_")[1]
+
+    vote_state[callback.from_user.id] = project_id
+
+
+    await callback.message.answer(
+        "📱 Ovoz berish uchun telefon raqamingizni yuboring:",
+        reply_markup=phone_keyboard
+    )
+
+
+    await callback.answer()
+
+
+
+@dp.message(lambda message: message.contact is not None)
+async def get_phone(message: types.Message):
+
+    user_id = message.from_user.id
+    phone = message.contact.phone_number
+
+
+    if user_id not in vote_state:
+
+        await message.answer(
+            "Avval loyiha tanlang."
+        )
+
+        return
+
+
+    project_id = vote_state[user_id]
+
+
+    cursor.execute(
+        """
+        SELECT id FROM votes
+        WHERE user_id=? AND project_id=?
+        """,
+        (
+            user_id,
+            project_id
+        )
+    )
+
+
+    exists = cursor.fetchone()
+
+
+    if exists:
+
+        await message.answer(
+            "❌ Siz bu loyiha uchun ovoz bergansiz."
+        )
+
+        return
+
+
+    cursor.execute(
+        """
+        INSERT INTO votes(
+            user_id,
+            project_id,
+            phone,
+            date
+        )
+        VALUES(?,?,?,?)
+        """,
+        (
+            user_id,
+            project_id,
+            phone,
+            datetime.now().strftime("%Y-%m-%d")
+        )
+    )
+
+
+    db.commit()
+
+
+    del vote_state[user_id]
+
+
+    await message.answer(
+        "✅ Ovoz qabul qilindi. Rahmat!"
+    )
