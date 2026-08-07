@@ -10,7 +10,7 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
-TOKEN = "8615736731:AAFImAWTDRhBJAyOhXbY6D0wwysIa0Boz1cmain.py"
+TOKEN="8615736731:AAFImAWTDRhBJAyOhXbY6D0wwysIa0Boz1c"
 
 ADMINLAR = [7998053914, 1599812727]
 
