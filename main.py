@@ -1,3 +1,4 @@
+from aiogram.types import ReplyKeyboardRemove
 import asyncio
 import sqlite3
 from datetime import datetime
@@ -62,6 +63,7 @@ db.commit()
 
 
 state = {}
+vote_state = {}
 
 
 language_keyboard = ReplyKeyboardMarkup(
