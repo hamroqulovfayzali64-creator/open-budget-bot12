@@ -12,7 +12,7 @@ from aiogram.types import (
 )
 
 
-TOKEN = "8615736731:AAFImAWTDRhBJAyOhXbY6D0wwysIa0Boz1c"
+TOKEN = "8615736731:AAEYW7RCc-YeGPI3mrod2dkyxeYR7QbRqOA"
 
 ADMINS = [
     7998053914,
