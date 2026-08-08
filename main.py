@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sqlite3
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -9,6 +10,7 @@ from aiogram.types import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    CallbackQuery,
 )
 
 # =========================================================
@@ -17,9 +19,9 @@ from aiogram.types import (
 
 BOT_TOKEN = "8615736731:AAEYW7RCc-YeGPI3mrod2dkyxeYR7QbRqOA"
 
-# Admin Telegram ID larini shu yerga yozing
 ADMIN_IDS = [
     7998053914,
+    # Ikkinchi admin bo‘lsa:
     # 1599812727,
 ]
 
@@ -81,7 +83,11 @@ def add_user(user_id, username, first_name):
         INSERT OR IGNORE INTO users
         (user_id, username, first_name)
         VALUES (?, ?, ?)
-    """, (user_id, username, first_name))
+    """, (
+        user_id,
+        username,
+        first_name
+    ))
 
     conn.commit()
     conn.close()
@@ -110,6 +116,7 @@ def get_language(user_id):
     )
 
     result = cursor.fetchone()
+
     conn.close()
 
     if result:
@@ -133,7 +140,7 @@ def language_keyboard():
                 InlineKeyboardButton(
                     text="🇷🇺 Русский",
                     callback_data="lang_ru"
-                ),
+                )
             ]
         ]
     )
@@ -144,9 +151,6 @@ def uz_keyboard():
         keyboard=[
             [
                 KeyboardButton(text="📌 Loyihalar")
-            ],
-            [
-                KeyboardButton(text="🔄 Loyihani almashtirish")
             ],
             [
                 KeyboardButton(text="📰 Yangiliklar"),
@@ -162,9 +166,6 @@ def ru_keyboard():
         keyboard=[
             [
                 KeyboardButton(text="📌 Проекты")
-            ],
-            [
-                KeyboardButton(text="🔄 Сменить проект")
             ],
             [
                 KeyboardButton(text="📰 Новости"),
@@ -199,6 +200,14 @@ def admin_keyboard():
 
 
 # =========================================================
+# ADMIN HOLATLARI
+# =========================================================
+
+admin_project_waiting = set()
+admin_news_waiting = set()
+
+
+# =========================================================
 # START
 # =========================================================
 
@@ -223,7 +232,7 @@ async def start_handler(message: Message):
 # =========================================================
 
 @dp.callback_query(F.data == "lang_uz")
-async def language_uz(callback):
+async def language_uz(callback: CallbackQuery):
 
     set_language(callback.from_user.id, "uz")
 
@@ -237,7 +246,7 @@ async def language_uz(callback):
 
 
 @dp.callback_query(F.data == "lang_ru")
-async def language_ru(callback):
+async def language_ru(callback: CallbackQuery):
 
     set_language(callback.from_user.id, "ru")
 
@@ -251,7 +260,7 @@ async def language_ru(callback):
 
 
 # =========================================================
-# LOYIHALAR
+# LOYIHALAR — O‘ZBEKCHA
 # =========================================================
 
 @dp.message(F.text == "📌 Loyihalar")
@@ -260,7 +269,10 @@ async def projects_uz(message: Message):
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, name, link FROM projects")
+    cursor.execute(
+        "SELECT id, name, link FROM projects"
+    )
+
     projects = cursor.fetchall()
 
     conn.close()
@@ -292,13 +304,20 @@ async def projects_uz(message: Message):
     )
 
 
+# =========================================================
+# LOYIHALAR — RUSCHA
+# =========================================================
+
 @dp.message(F.text == "📌 Проекты")
 async def projects_ru(message: Message):
 
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, name, link FROM projects")
+    cursor.execute(
+        "SELECT id, name, link FROM projects"
+    )
+
     projects = cursor.fetchall()
 
     conn.close()
@@ -331,32 +350,7 @@ async def projects_ru(message: Message):
 
 
 # =========================================================
-# LOYIHANI ALMASHTIRISH
-# =========================================================
-
-@dp.message(F.text == "🔄 Loyihani almashtirish")
-async def change_project_uz(message: Message):
-
-    await message.answer(
-        "🔄 Loyihani almashtirish uchun "
-        "quyidagi loyihalardan birini tanlang."
-    )
-
-    await projects_uz(message)
-
-
-@dp.message(F.text == "🔄 Сменить проект")
-async def change_project_ru(message: Message):
-
-    await message.answer(
-        "🔄 Выберите другой проект."
-    )
-
-    await projects_ru(message)
-
-
-# =========================================================
-# YANGILIKLAR
+# YANGILIKLAR — O‘ZBEKCHA
 # =========================================================
 
 @dp.message(F.text == "📰 Yangiliklar")
@@ -370,6 +364,7 @@ async def news_uz(message: Message):
     )
 
     news = cursor.fetchall()
+
     conn.close()
 
     if not news:
@@ -386,6 +381,10 @@ async def news_uz(message: Message):
     await message.answer(text)
 
 
+# =========================================================
+# YANGILIKLAR — RUSCHA
+# =========================================================
+
 @dp.message(F.text == "📰 Новости")
 async def news_ru(message: Message):
 
@@ -397,6 +396,7 @@ async def news_ru(message: Message):
     )
 
     news = cursor.fetchall()
+
     conn.close()
 
     if not news:
@@ -414,7 +414,7 @@ async def news_ru(message: Message):
 
 
 # =========================================================
-# YORDAM
+# YORDAM — O‘ZBEKCHA
 # =========================================================
 
 @dp.message(F.text == "❓ Yordam")
@@ -423,11 +423,14 @@ async def help_uz(message: Message):
     await message.answer(
         "❓ Yordam\n\n"
         "📌 Loyihalar — mavjud loyihalarni ko‘rish\n"
-        "🔄 Loyihani almashtirish — boshqa loyiha tanlash\n"
         "📰 Yangiliklar — yangiliklarni ko‘rish\n\n"
         "Muammo bo‘lsa, administratorga murojaat qiling."
     )
 
+
+# =========================================================
+# YORDAM — RUSCHA
+# =========================================================
 
 @dp.message(F.text == "❓ Помощь")
 async def help_ru(message: Message):
@@ -435,7 +438,6 @@ async def help_ru(message: Message):
     await message.answer(
         "❓ Помощь\n\n"
         "📌 Проекты — просмотр проектов\n"
-        "🔄 Сменить проект — выбрать другой проект\n"
         "📰 Новости — просмотр новостей\n\n"
         "При возникновении проблем обратитесь к администратору."
     )
@@ -481,17 +483,22 @@ async def statistics(message: Message):
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM users")
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
+
     total_users = cursor.fetchone()[0]
 
     cursor.execute(
         "SELECT COUNT(*) FROM users WHERE voted = 1"
     )
+
     voted_users = cursor.fetchone()[0]
 
     cursor.execute(
         "SELECT COUNT(*) FROM users WHERE voted = 0"
     )
+
     not_voted = cursor.fetchone()[0]
 
     conn.close()
@@ -505,11 +512,8 @@ async def statistics(message: Message):
 
 
 # =========================================================
-# LOYIHA QO‘SHISH
+# LOYIHA QO‘SHISHNI BOSHLASH
 # =========================================================
-
-admin_project_waiting = set()
-
 
 @dp.message(F.text == "➕ Loyiha qo‘shish")
 async def add_project_start(message: Message):
@@ -526,33 +530,42 @@ async def add_project_start(message: Message):
     )
 
 
-@dp.message()
-async def admin_project_handler(message: Message):
+# =========================================================
+# LOYIHA SAQLASH
+# =========================================================
+
+async def save_project(message: Message):
 
     if not is_admin(message.from_user.id):
-        return
+        return False
 
     if message.from_user.id not in admin_project_waiting:
-        return
+        return False
 
-    if "|" not in message.text:
+    if not message.text or "|" not in message.text:
         await message.answer(
             "❌ Format noto‘g‘ri.\n\n"
             "Masalan:\n"
             "1-loyiha | https://example.com"
         )
-        return
+        return True
 
     name, link = message.text.split("|", 1)
 
     name = name.strip()
     link = link.strip()
 
+    if not name:
+        await message.answer(
+            "❌ Loyiha nomini yozing."
+        )
+        return True
+
     if not link.startswith(("http://", "https://")):
         await message.answer(
             "❌ Havola http:// yoki https:// bilan boshlanishi kerak."
         )
-        return
+        return True
 
     conn = db_connect()
     cursor = conn.cursor()
@@ -568,15 +581,77 @@ async def admin_project_handler(message: Message):
     admin_project_waiting.remove(message.from_user.id)
 
     await message.answer(
-        f"✅ Loyiha qo‘shildi!\n\n"
+        "✅ Loyiha muvaffaqiyatli qo‘shildi!\n\n"
         f"📌 {name}\n"
         f"🔗 {link}",
         reply_markup=admin_keyboard()
     )
 
+    return True
+
 
 # =========================================================
-# LOYIHALAR RO‘YXATI ADMIN UCHUN
+# YANGILIK QO‘SHISHNI BOSHLASH
+# =========================================================
+
+@dp.message(F.text == "📰 Yangilik qo‘shish")
+async def add_news_start(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    admin_news_waiting.add(message.from_user.id)
+
+    await message.answer(
+        "📰 Yangilik matnini yuboring.\n\n"
+        "Masalan:\n"
+        "Bugun yangi loyiha qo‘shildi."
+    )
+
+
+# =========================================================
+# YANGILIK SAQLASH
+# =========================================================
+
+async def save_news(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return False
+
+    if message.from_user.id not in admin_news_waiting:
+        return False
+
+    if not message.text or not message.text.strip():
+        await message.answer(
+            "❌ Yangilik matni bo‘sh bo‘lishi mumkin emas."
+        )
+        return True
+
+    text = message.text.strip()
+
+    conn = db_connect()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO news (text) VALUES (?)",
+        (text,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    admin_news_waiting.remove(message.from_user.id)
+
+    await message.answer(
+        "✅ Yangilik muvaffaqiyatli qo‘shildi!",
+        reply_markup=admin_keyboard()
+    )
+
+    return True
+
+
+# =========================================================
+# ADMIN UCHUN LOYIHALAR RO‘YXATI
 # =========================================================
 
 @dp.message(F.text == "📋 Loyihalar")
@@ -593,6 +668,7 @@ async def admin_projects(message: Message):
     )
 
     projects = cursor.fetchall()
+
     conn.close()
 
     if not projects:
@@ -615,26 +691,6 @@ async def admin_projects(message: Message):
 
 
 # =========================================================
-# YANGILIK QO‘SHISH
-# =========================================================
-
-admin_news_waiting = set()
-
-
-@dp.message(F.text == "📰 Yangilik qo‘shish")
-async def add_news_start(message: Message):
-
-    if not is_admin(message.from_user.id):
-        return
-
-    admin_news_waiting.add(message.from_user.id)
-
-    await message.answer(
-        "📰 Yangilik matnini yuboring."
-    )
-
-
-# =========================================================
 # ADMIN PANELNI YOPISH
 # =========================================================
 
@@ -647,15 +703,34 @@ async def close_admin(message: Message):
     lang = get_language(message.from_user.id)
 
     if lang == "ru":
+
         await message.answer(
             "✅ Admin panel yopildi.",
             reply_markup=ru_keyboard()
         )
+
     else:
+
         await message.answer(
             "✅ Admin panel yopildi.",
             reply_markup=uz_keyboard()
         )
+
+
+# =========================================================
+# BOSHQA XABARLARNI QAYTA ISHLASH
+# =========================================================
+
+@dp.message()
+async def other_messages(message: Message):
+
+    # Avval yangilik qo‘shishni tekshiramiz
+    if await save_news(message):
+        return
+
+    # Keyin loyiha qo‘shishni tekshiramiz
+    if await save_project(message):
+        return
 
 
 # =========================================================
@@ -666,7 +741,9 @@ async def main():
 
     init_db()
 
-    print("Bot ishga tushdi...")
+    print("=================================")
+    print("BOT ISHGA TUSHDI")
+    print("=================================")
 
     await dp.start_polling(bot)
 
