@@ -12,6 +12,11 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
 )
+from aiogram.exceptions import (
+    TelegramForbiddenError,
+    TelegramBadRequest,
+    TelegramRetryAfter,
+)
 
 # =========================================================
 # SOZLAMALAR
@@ -183,6 +188,9 @@ def admin_keyboard():
                 KeyboardButton(text="📰 Yangilik qo‘shish")
             ],
             [
+                KeyboardButton(text="📢 Ommaviy xabar")
+            ],
+            [
                 KeyboardButton(text="📋 Loyihalar")
             ],
             [
@@ -197,14 +205,12 @@ def admin_keyboard():
 # ADMIN HOLATLARI
 # =========================================================
 
-# Loyiha havolasi kutilayotgan adminlar
 admin_project_waiting = set()
-
-# Loyiha nomini yuborgan adminlarning loyiha nomlari
 admin_project_name = {}
-
-# Yangilik yuborayotgan adminlar
 admin_news_waiting = set()
+
+# Ommaviy xabar yuborayotgan adminlar
+admin_broadcast_waiting = set()
 
 
 # =========================================================
@@ -458,10 +464,10 @@ async def admin_command(message: Message):
 
     user_id = message.from_user.id
 
-    # Eski holatlarni tozalash
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_news_waiting.discard(user_id)
+    admin_broadcast_waiting.discard(user_id)
 
     await message.answer(
         "👨‍💼 Admin panel",
@@ -508,6 +514,157 @@ async def statistics(message: Message):
 
 
 # =========================================================
+# OMMAVIY XABAR — BOSHLASH
+# =========================================================
+
+@dp.message(F.text == "📢 Ommaviy xabar")
+async def broadcast_start(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+
+    # Boshqa rejimlarni o‘chiramiz
+    admin_project_waiting.discard(user_id)
+    admin_project_name.pop(user_id, None)
+    admin_news_waiting.discard(user_id)
+
+    # Ommaviy xabar rejimini yoqamiz
+    admin_broadcast_waiting.add(user_id)
+
+    await message.answer(
+        "📢 OMMAVIY XABAR\n\n"
+        "Barcha bot foydalanuvchilariga yubormoqchi "
+        "bo‘lgan xabaringizni yuboring.\n\n"
+        "📝 Matn\n"
+        "🖼 Rasm\n"
+        "🎥 Video\n"
+        "📄 Hujjat\n"
+        "yoki boshqa Telegram xabarini yuborishingiz mumkin.\n\n"
+        "⚠️ Siz yuborgan xabar barcha foydalanuvchilarga tarqatiladi."
+    )
+
+
+# =========================================================
+# OMMAVIY XABARNI YUBORISH
+# =========================================================
+
+async def send_broadcast(message: Message):
+
+    user_id = message.from_user.id
+
+    if not is_admin(user_id):
+        return False
+
+    if user_id not in admin_broadcast_waiting:
+        return False
+
+    conn = db_connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT user_id FROM users")
+
+    users = cursor.fetchall()
+
+    conn.close()
+
+    if not users:
+        admin_broadcast_waiting.discard(user_id)
+
+        await message.answer(
+            "❌ Bazada foydalanuvchilar topilmadi.",
+            reply_markup=admin_keyboard()
+        )
+
+        return True
+
+    await message.answer(
+        "⏳ Xabar barcha foydalanuvchilarga yuborilmoqda..."
+    )
+
+    success = 0
+    blocked = 0
+    failed = 0
+
+    for row in users:
+
+        target_user_id = row[0]
+
+        try:
+
+            await bot.copy_message(
+                chat_id=target_user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+
+            success += 1
+
+            # Telegram serveriga juda tez so‘rov yubormaslik
+            await asyncio.sleep(0.05)
+
+        except TelegramRetryAfter as e:
+
+            await asyncio.sleep(e.retry_after)
+
+            try:
+
+                await bot.copy_message(
+                    chat_id=target_user_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+
+                success += 1
+
+            except Exception:
+                failed += 1
+
+        except TelegramForbiddenError:
+
+            # Foydalanuvchi botni bloklagan
+            blocked += 1
+
+            conn = db_connect()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "DELETE FROM users WHERE user_id = ?",
+                (target_user_id,)
+            )
+
+            conn.commit()
+            conn.close()
+
+        except TelegramBadRequest:
+
+            failed += 1
+
+        except Exception as e:
+
+            logging.error(
+                f"Broadcast xatosi {target_user_id}: {e}"
+            )
+
+            failed += 1
+
+    # Rejimni tugatamiz
+    admin_broadcast_waiting.discard(user_id)
+
+    await message.answer(
+        "✅ OMMAVIY XABAR YUBORILDI!\n\n"
+        f"📨 Muvaffaqiyatli yuborildi: {success}\n"
+        f"🚫 Botni bloklaganlar: {blocked}\n"
+        f"❌ Xatolik: {failed}\n"
+        f"👥 Jami bazadagi foydalanuvchilar: {len(users)}",
+        reply_markup=admin_keyboard()
+    )
+
+    return True
+
+
+# =========================================================
 # LOYIHA QO‘SHISH — 1-BOSQICH
 # =========================================================
 
@@ -519,13 +676,10 @@ async def add_project_start(message: Message):
 
     user_id = message.from_user.id
 
-    # Yangilik rejimini o‘chiramiz
     admin_news_waiting.discard(user_id)
-
-    # Eski loyiha ma'lumotlarini tozalaymiz
+    admin_broadcast_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
 
-    # Loyiha qo‘shish rejimini yoqamiz
     admin_project_waiting.add(user_id)
 
     await message.answer(
@@ -611,7 +765,6 @@ async def save_project(message: Message):
     conn.commit()
     conn.close()
 
-    # Holatlarni tozalaymiz
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
 
@@ -637,11 +790,10 @@ async def add_news_start(message: Message):
 
     user_id = message.from_user.id
 
-    # Loyiha rejimini o‘chiramiz
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
+    admin_broadcast_waiting.discard(user_id)
 
-    # Yangilik rejimini yoqamiz
     admin_news_waiting.add(user_id)
 
     await message.answer(
@@ -753,6 +905,7 @@ async def close_admin(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_news_waiting.discard(user_id)
+    admin_broadcast_waiting.discard(user_id)
 
     lang = get_language(user_id)
 
@@ -778,7 +931,11 @@ async def close_admin(message: Message):
 @dp.message()
 async def other_messages(message: Message):
 
-    # Avval loyiha rejimini tekshiramiz
+    # Avval ommaviy xabar rejimini tekshiramiz
+    if await send_broadcast(message):
+        return
+
+    # Keyin loyiha rejimini tekshiramiz
     if await save_project(message):
         return
 
