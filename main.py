@@ -48,9 +48,11 @@ def db_connect():
 
 
 def init_db():
+
     conn = db_connect()
     cursor = conn.cursor()
 
+    # USERS
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -62,6 +64,7 @@ def init_db():
         )
     """)
 
+    # PROJECTS
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,27 +74,60 @@ def init_db():
         )
     """)
 
+    # NEWS
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS news (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            text TEXT NOT NULL
+            text TEXT,
+            photo_id TEXT
         )
     """)
 
-    # Eski projects jadvalida phone ustuni bo'lmasa qo'shamiz
-    cursor.execute("PRAGMA table_info(projects)")
-    columns = [row[1] for row in cursor.fetchall()]
+    # =====================================================
+    # ESKI DATABASE BILAN MOSLASH
+    # =====================================================
 
-    if "phone" not in columns:
+    # PROJECTS uchun phone ustuni
+    cursor.execute("PRAGMA table_info(projects)")
+    project_columns = [
+        row[1] for row in cursor.fetchall()
+    ]
+
+    if "phone" not in project_columns:
+
         cursor.execute(
             "ALTER TABLE projects ADD COLUMN phone TEXT"
+        )
+
+    # NEWS uchun photo_id ustuni
+    cursor.execute("PRAGMA table_info(news)")
+    news_columns = [
+        row[1] for row in cursor.fetchall()
+    ]
+
+    if "photo_id" not in news_columns:
+
+        cursor.execute(
+            "ALTER TABLE news ADD COLUMN photo_id TEXT"
+        )
+
+    # NEWS text ustuni yo'q bo'lsa
+    if "text" not in news_columns:
+
+        cursor.execute(
+            "ALTER TABLE news ADD COLUMN text TEXT"
         )
 
     conn.commit()
     conn.close()
 
 
+# =========================================================
+# USER FUNCTIONS
+# =========================================================
+
 def add_user(user_id, username, first_name):
+
     conn = db_connect()
     cursor = conn.cursor()
 
@@ -99,19 +135,31 @@ def add_user(user_id, username, first_name):
         INSERT OR IGNORE INTO users
         (user_id, username, first_name)
         VALUES (?, ?, ?)
-    """, (user_id, username, first_name))
+    """, (
+        user_id,
+        username,
+        first_name
+    ))
 
     conn.commit()
     conn.close()
 
 
 def set_language(user_id, language):
+
     conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute(
-        "UPDATE users SET language = ? WHERE user_id = ?",
-        (language, user_id)
+        """
+        UPDATE users
+        SET language = ?
+        WHERE user_id = ?
+        """,
+        (
+            language,
+            user_id
+        )
     )
 
     conn.commit()
@@ -119,11 +167,16 @@ def set_language(user_id, language):
 
 
 def get_language(user_id):
+
     conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT language FROM users WHERE user_id = ?",
+        """
+        SELECT language
+        FROM users
+        WHERE user_id = ?
+        """,
         (user_id,)
     )
 
@@ -138,12 +191,20 @@ def get_language(user_id):
 
 
 def save_user_phone(user_id, phone):
+
     conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute(
-        "UPDATE users SET phone = ? WHERE user_id = ?",
-        (phone, user_id)
+        """
+        UPDATE users
+        SET phone = ?
+        WHERE user_id = ?
+        """,
+        (
+            phone,
+            user_id
+        )
     )
 
     conn.commit()
@@ -151,12 +212,17 @@ def save_user_phone(user_id, phone):
 
 
 def delete_user(user_id):
+
     try:
+
         conn = db_connect()
         cursor = conn.cursor()
 
         cursor.execute(
-            "DELETE FROM users WHERE user_id = ?",
+            """
+            DELETE FROM users
+            WHERE user_id = ?
+            """,
             (user_id,)
         )
 
@@ -164,9 +230,19 @@ def delete_user(user_id):
         conn.close()
 
     except Exception as e:
+
         logging.error(
-            f"Foydalanuvchini o‘chirishda xato: {e}"
+            f"Foydalanuvchini o‘chirish xatosi: {e}"
         )
+
+
+# =========================================================
+# ADMIN
+# =========================================================
+
+def is_admin(user_id):
+
+    return user_id in ADMIN_IDS
 
 
 # =========================================================
@@ -174,6 +250,7 @@ def delete_user(user_id):
 # =========================================================
 
 def language_keyboard():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -191,14 +268,21 @@ def language_keyboard():
 
 
 def uz_keyboard():
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📌 Loyihalar")
+                KeyboardButton(
+                    text="📌 Loyihalar"
+                )
             ],
             [
-                KeyboardButton(text="📰 Yangiliklar"),
-                KeyboardButton(text="❓ Yordam")
+                KeyboardButton(
+                    text="📰 Yangiliklar"
+                ),
+                KeyboardButton(
+                    text="❓ Yordam"
+                )
             ]
         ],
         resize_keyboard=True
@@ -206,14 +290,21 @@ def uz_keyboard():
 
 
 def ru_keyboard():
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📌 Проекты")
+                KeyboardButton(
+                    text="📌 Проекты"
+                )
             ],
             [
-                KeyboardButton(text="📰 Новости"),
-                KeyboardButton(text="❓ Помощь")
+                KeyboardButton(
+                    text="📰 Новости"
+                ),
+                KeyboardButton(
+                    text="❓ Помощь"
+                )
             ]
         ],
         resize_keyboard=True
@@ -221,36 +312,46 @@ def ru_keyboard():
 
 
 def admin_keyboard():
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📊 Statistika")
+                KeyboardButton(
+                    text="📊 Statistika"
+                )
             ],
             [
-                KeyboardButton(text="➕ Loyiha qo‘shish")
+                KeyboardButton(
+                    text="➕ Loyiha qo‘shish"
+                )
             ],
             [
-                KeyboardButton(text="📰 Yangilik qo‘shish")
+                KeyboardButton(
+                    text="📰 Yangilik qo‘shish"
+                )
             ],
             [
-                KeyboardButton(text="📢 Ommaviy xabar")
+                KeyboardButton(
+                    text="📢 Ommaviy xabar"
+                )
             ],
             [
-                KeyboardButton(text="📋 Loyihalar")
+                KeyboardButton(
+                    text="📋 Loyihalar"
+                )
             ],
             [
-                KeyboardButton(text="❌ Admin panelni yopish")
+                KeyboardButton(
+                    text="❌ Admin panelni yopish"
+                )
             ]
         ],
         resize_keyboard=True
     )
 
 
-# =========================================================
-# TELEFON KEYBOARD
-# =========================================================
-
 def phone_keyboard_uz():
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -260,7 +361,9 @@ def phone_keyboard_uz():
                 )
             ],
             [
-                KeyboardButton(text="❌ Bekor qilish")
+                KeyboardButton(
+                    text="❌ Bekor qilish"
+                )
             ]
         ],
         resize_keyboard=True,
@@ -269,6 +372,7 @@ def phone_keyboard_uz():
 
 
 def phone_keyboard_ru():
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -278,7 +382,9 @@ def phone_keyboard_ru():
                 )
             ],
             [
-                KeyboardButton(text="❌ Отмена")
+                KeyboardButton(
+                    text="❌ Отмена"
+                )
             ]
         ],
         resize_keyboard=True,
@@ -287,31 +393,22 @@ def phone_keyboard_ru():
 
 
 # =========================================================
-# OVOZ BERISH UCHUN HOLATLAR
+# HOLATLAR
 # =========================================================
 
 # user_id -> project_id
 waiting_for_phone = {}
 
-
-# =========================================================
-# ADMIN HOLATLARI
-# =========================================================
-
+# Admin loyiha qo'shish
 admin_project_waiting = set()
 admin_project_name = {}
 admin_project_link = {}
 
+# Admin yangilik
 admin_news_waiting = set()
+
+# Admin ommaviy xabar
 admin_broadcast_waiting = set()
-
-
-# =========================================================
-# ADMIN TEKSHIRISH
-# =========================================================
-
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
 
 
 # =========================================================
@@ -335,13 +432,16 @@ async def start_handler(message: Message):
 
 
 # =========================================================
-# TIL TANLASH
+# TIL — UZ
 # =========================================================
 
 @dp.callback_query(F.data == "lang_uz")
 async def language_uz(callback: CallbackQuery):
 
-    set_language(callback.from_user.id, "uz")
+    set_language(
+        callback.from_user.id,
+        "uz"
+    )
 
     await callback.message.answer(
         "🇺🇿 O‘zbek tili tanlandi.",
@@ -351,10 +451,17 @@ async def language_uz(callback: CallbackQuery):
     await callback.answer()
 
 
+# =========================================================
+# TIL — RU
+# =========================================================
+
 @dp.callback_query(F.data == "lang_ru")
 async def language_ru(callback: CallbackQuery):
 
-    set_language(callback.from_user.id, "ru")
+    set_language(
+        callback.from_user.id,
+        "ru"
+    )
 
     await callback.message.answer(
         "🇷🇺 Русский язык выбран.",
@@ -365,7 +472,7 @@ async def language_ru(callback: CallbackQuery):
 
 
 # =========================================================
-# LOYIHALAR — O'ZBEKCHA
+# LOYIHALAR — UZ
 # =========================================================
 
 @dp.message(F.text == "📌 Loyihalar")
@@ -391,40 +498,42 @@ async def projects_uz(message: Message):
     conn.close()
 
     if not projects:
+
         await message.answer(
             "📌 Hozircha loyihalar qo‘shilmagan."
         )
+
         return
 
     for project_id, name, link in projects:
 
-        buttons = [
-            [
-                InlineKeyboardButton(
-                    text="🔗 Havolani ochish",
-                    url=link
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗳 Ovoz berish",
-                    callback_data=f"vote_{project_id}"
-                )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔗 Havolani ochish",
+                        url=link
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🗳 Ovoz berish",
+                        callback_data=f"vote_{project_id}"
+                    )
+                ]
             ]
-        ]
+        )
 
         await message.answer(
             f"📌 <b>{name}</b>\n\n"
             "Ovoz berish uchun quyidagi tugmani bosing.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=buttons
-            ),
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
 
 # =========================================================
-# LOYIHALAR — RUSCHA
+# LOYIHALAR — RU
 # =========================================================
 
 @dp.message(F.text == "📌 Проекты")
@@ -450,61 +559,74 @@ async def projects_ru(message: Message):
     conn.close()
 
     if not projects:
+
         await message.answer(
             "📌 Пока проекты не добавлены."
         )
+
         return
 
     for project_id, name, link in projects:
 
-        buttons = [
-            [
-                InlineKeyboardButton(
-                    text="🔗 Открыть ссылку",
-                    url=link
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗳 Голосовать",
-                    callback_data=f"vote_{project_id}"
-                )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔗 Открыть ссылку",
+                        url=link
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🗳 Голосовать",
+                        callback_data=f"vote_{project_id}"
+                    )
+                ]
             ]
-        ]
+        )
 
         await message.answer(
             f"📌 <b>{name}</b>\n\n"
             "Для голосования нажмите кнопку ниже.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=buttons
-            ),
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
 
 # =========================================================
-# OVOZ BERISH — BOSHLASH
+# OVOZ BERISH BOSHLASH
 # =========================================================
 
 @dp.callback_query(F.data.startswith("vote_"))
 async def vote_start(callback: CallbackQuery):
 
     try:
+
         project_id = int(
-            callback.data.replace("vote_", "")
+            callback.data.replace(
+                "vote_",
+                ""
+            )
         )
+
     except ValueError:
+
         await callback.answer(
             "❌ Xatolik.",
             show_alert=True
         )
+
         return
 
     conn = db_connect()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, name FROM projects WHERE id = ?",
+        """
+        SELECT id, name
+        FROM projects
+        WHERE id = ?
+        """,
         (project_id,)
     )
 
@@ -513,15 +635,21 @@ async def vote_start(callback: CallbackQuery):
     conn.close()
 
     if not project:
+
         await callback.answer(
             "❌ Loyiha topilmadi.",
             show_alert=True
         )
+
         return
 
-    waiting_for_phone[callback.from_user.id] = project_id
+    waiting_for_phone[
+        callback.from_user.id
+    ] = project_id
 
-    lang = get_language(callback.from_user.id)
+    lang = get_language(
+        callback.from_user.id
+    )
 
     if lang == "ru":
 
@@ -549,7 +677,7 @@ async def vote_start(callback: CallbackQuery):
 
 
 # =========================================================
-# TELEFON RAQAMINI QABUL QILISH
+# TELEFON QABUL QILISH
 # =========================================================
 
 @dp.message(F.contact)
@@ -557,7 +685,6 @@ async def receive_phone(message: Message):
 
     user_id = message.from_user.id
 
-    # Faqat ovoz berish jarayonida bo'lsa
     if user_id not in waiting_for_phone:
 
         await message.answer(
@@ -568,33 +695,34 @@ async def receive_phone(message: Message):
 
     project_id = waiting_for_phone[user_id]
 
-    # Contact aynan foydalanuvchining o'zi ekanini tekshirish
+    # Foydalanuvchi o'z kontaktini yuborganini tekshirish
     if message.contact.user_id != user_id:
 
         await message.answer(
-            "❌ Iltimos, o‘zingizning Telegram akkauntingizga "
-            "tegishli telefon raqamini yuboring."
+            "❌ Iltimos, o‘zingizning telefon "
+            "raqamingizni yuboring."
         )
 
         return
 
     phone = message.contact.phone_number
 
-    # Telefonni foydalanuvchi bazasiga saqlaymiz
     save_user_phone(
         user_id,
         phone
     )
 
-    # Loyihani topamiz
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT id, name, link
         FROM projects
         WHERE id = ?
-    """, (project_id,))
+        """,
+        (project_id,)
+    )
 
     project = cursor.fetchone()
 
@@ -602,7 +730,10 @@ async def receive_phone(message: Message):
 
     if not project:
 
-        waiting_for_phone.pop(user_id, None)
+        waiting_for_phone.pop(
+            user_id,
+            None
+        )
 
         await message.answer(
             "❌ Loyiha topilmadi."
@@ -613,27 +744,45 @@ async def receive_phone(message: Message):
     project_name = project[1]
     project_link = project[2]
 
-    # Jarayon tugadi
-    waiting_for_phone.pop(user_id, None)
+    waiting_for_phone.pop(
+        user_id,
+        None
+    )
 
     lang = get_language(user_id)
 
-    # =====================================================
-    # O'ZBEKCHA
-    # =====================================================
-
-    if lang == "uz":
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔗 Ovoz berish",
-                        url=project_link
-                    )
-                ]
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "🔗 Ovoz berish"
+                        if lang == "uz"
+                        else
+                        "🔗 Голосовать"
+                    ),
+                    url=project_link
+                )
             ]
+        ]
+    )
+
+    if lang == "ru":
+
+        await message.answer(
+            f"✅ Ваш номер принят.\n\n"
+            f"📌 Проект: <b>{project_name}</b>\n\n"
+            "Теперь нажмите кнопку ниже.",
+            reply_markup=keyboard,
+            parse_mode="HTML"
         )
+
+        await message.answer(
+            "Главное меню:",
+            reply_markup=ru_keyboard()
+        )
+
+    else:
 
         await message.answer(
             f"✅ Telefon raqamingiz qabul qilindi.\n\n"
@@ -649,48 +798,25 @@ async def receive_phone(message: Message):
             reply_markup=uz_keyboard()
         )
 
-    # =====================================================
-    # RUSCHA
-    # =====================================================
-
-    else:
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔗 Голосовать",
-                        url=project_link
-                    )
-                ]
-            ]
-        )
-
-        await message.answer(
-            f"✅ Ваш номер принят.\n\n"
-            f"📌 Проект: <b>{project_name}</b>\n\n"
-            "Теперь нажмите кнопку ниже, "
-            "чтобы перейти на страницу голосования.",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-        await message.answer(
-            "Главное меню:",
-            reply_markup=ru_keyboard()
-        )
-
 
 # =========================================================
 # BEKOR QILISH
 # =========================================================
 
-@dp.message(F.text.in_({"❌ Bekor qilish", "❌ Отмена"}))
+@dp.message(
+    F.text.in_({
+        "❌ Bekor qilish",
+        "❌ Отмена"
+    })
+)
 async def cancel_phone(message: Message):
 
     user_id = message.from_user.id
 
-    waiting_for_phone.pop(user_id, None)
+    waiting_for_phone.pop(
+        user_id,
+        None
+    )
 
     lang = get_language(user_id)
 
@@ -710,7 +836,7 @@ async def cancel_phone(message: Message):
 
 
 # =========================================================
-# YANGILIKLAR — O'ZBEKCHA
+# YANGILIKLAR — UZ
 # =========================================================
 
 @dp.message(F.text == "📰 Yangiliklar")
@@ -725,30 +851,42 @@ async def news_uz(message: Message):
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT text FROM news ORDER BY id DESC"
-    )
+    cursor.execute("""
+        SELECT text, photo_id
+        FROM news
+        ORDER BY id DESC
+    """)
 
     news = cursor.fetchall()
 
     conn.close()
 
     if not news:
+
         await message.answer(
             "📰 Hozircha yangiliklar yo‘q."
         )
+
         return
 
-    text = "📰 Yangiliklar:\n\n"
+    for text, photo_id in news:
 
-    for item in news:
-        text += f"• {item[0]}\n\n"
+        if photo_id:
 
-    await message.answer(text)
+            await message.answer_photo(
+                photo=photo_id,
+                caption=text if text else None
+            )
+
+        elif text:
+
+            await message.answer(
+                f"📰 {text}"
+            )
 
 
 # =========================================================
-# YANGILIKLAR — RUSCHA
+# YANGILIKLAR — RU
 # =========================================================
 
 @dp.message(F.text == "📰 Новости")
@@ -763,30 +901,42 @@ async def news_ru(message: Message):
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT text FROM news ORDER BY id DESC"
-    )
+    cursor.execute("""
+        SELECT text, photo_id
+        FROM news
+        ORDER BY id DESC
+    """)
 
     news = cursor.fetchall()
 
     conn.close()
 
     if not news:
+
         await message.answer(
             "📰 Новостей пока нет."
         )
+
         return
 
-    text = "📰 Новости:\n\n"
+    for text, photo_id in news:
 
-    for item in news:
-        text += f"• {item[0]}\n\n"
+        if photo_id:
 
-    await message.answer(text)
+            await message.answer_photo(
+                photo=photo_id,
+                caption=text if text else None
+            )
+
+        elif text:
+
+            await message.answer(
+                f"📰 {text}"
+            )
 
 
 # =========================================================
-# YORDAM
+# YORDAM — UZ
 # =========================================================
 
 @dp.message(F.text == "❓ Yordam")
@@ -794,11 +944,16 @@ async def help_uz(message: Message):
 
     await message.answer(
         "❓ Yordam\n\n"
-        "📌 Loyihalar — mavjud loyihalarni ko‘rish\n"
-        "📰 Yangiliklar — yangiliklarni ko‘rish\n\n"
+        "📌 Loyihalar — loyihalarni ko‘rish\n"
+        "📰 Yangiliklar — yangiliklarni ko‘rish\n"
+        "🗳 Ovoz berish — loyiha uchun ovoz berish\n\n"
         "Muammo bo‘lsa, administratorga murojaat qiling."
     )
 
+
+# =========================================================
+# YORDAM — RU
+# =========================================================
 
 @dp.message(F.text == "❓ Помощь")
 async def help_ru(message: Message):
@@ -806,7 +961,8 @@ async def help_ru(message: Message):
     await message.answer(
         "❓ Помощь\n\n"
         "📌 Проекты — просмотр проектов\n"
-        "📰 Новости — просмотр новостей\n\n"
+        "📰 Новости — просмотр новостей\n"
+        "🗳 Голосовать — голосование за проект\n\n"
         "При возникновении проблем обратитесь к администратору."
     )
 
@@ -818,7 +974,9 @@ async def help_ru(message: Message):
 @dp.message(Command("admin"))
 async def admin_command(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
 
         await message.answer(
             "⛔ Sizda admin huquqi yo‘q."
@@ -831,6 +989,7 @@ async def admin_command(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
 
@@ -847,7 +1006,9 @@ async def admin_command(message: Message):
 @dp.message(F.text == "📊 Statistika")
 async def statistics(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     conn = db_connect()
@@ -856,22 +1017,40 @@ async def statistics(message: Message):
     cursor.execute(
         "SELECT COUNT(*) FROM users"
     )
+
     total_users = cursor.fetchone()[0]
 
     cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE voted = 1"
+        """
+        SELECT COUNT(*)
+        FROM users
+        WHERE voted = 1
+        """
     )
+
     voted_users = cursor.fetchone()[0]
 
     cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE voted = 0"
+        """
+        SELECT COUNT(*)
+        FROM users
+        WHERE voted = 0
+        """
     )
+
     not_voted = cursor.fetchone()[0]
 
     cursor.execute(
         "SELECT COUNT(*) FROM projects"
     )
+
     total_projects = cursor.fetchone()[0]
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM news"
+    )
+
+    total_news = cursor.fetchone()[0]
 
     conn.close()
 
@@ -880,7 +1059,8 @@ async def statistics(message: Message):
         f"👥 Jami foydalanuvchilar: {total_users}\n"
         f"🗳 Ovoz berganlar: {voted_users}\n"
         f"⏳ Ovoz bermaganlar: {not_voted}\n"
-        f"📌 Jami loyihalar: {total_projects}"
+        f"📌 Jami loyihalar: {total_projects}\n"
+        f"📰 Jami yangiliklar: {total_news}"
     )
 
 
@@ -891,7 +1071,9 @@ async def statistics(message: Message):
 @dp.message(F.text == "📢 Ommaviy xabar")
 async def broadcast_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -899,24 +1081,26 @@ async def broadcast_start(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_news_waiting.discard(user_id)
 
     admin_broadcast_waiting.add(user_id)
 
     await message.answer(
         "📢 OMMAVIY XABAR\n\n"
-        "Barcha bot foydalanuvchilariga yubormoqchi "
+        "Barcha foydalanuvchilarga yubormoqchi "
         "bo‘lgan xabaringizni yuboring.\n\n"
         "📝 Matn\n"
         "🖼 Rasm\n"
         "🎥 Video\n"
         "📄 Hujjat\n\n"
-        "⚠️ Siz yuborgan xabar barcha foydalanuvchilarga tarqatiladi."
+        "⚠️ Siz yuborgan xabar barcha "
+        "foydalanuvchilarga yuboriladi."
     )
 
 
 # =========================================================
-# OMMAVIY XABAR
+# OMMAVIY XABAR YUBORISH
 # =========================================================
 
 async def send_broadcast(message: Message):
@@ -942,7 +1126,9 @@ async def send_broadcast(message: Message):
 
     if not users:
 
-        admin_broadcast_waiting.discard(user_id)
+        admin_broadcast_waiting.discard(
+            user_id
+        )
 
         await message.answer(
             "❌ Bazada foydalanuvchilar topilmadi.",
@@ -986,7 +1172,9 @@ async def send_broadcast(message: Message):
 
             except TelegramRetryAfter as e:
 
-                await asyncio.sleep(e.retry_after)
+                await asyncio.sleep(
+                    e.retry_after
+                )
 
                 try:
 
@@ -1010,7 +1198,10 @@ async def send_broadcast(message: Message):
             except TelegramForbiddenError:
 
                 blocked += 1
-                delete_user(target_user_id)
+
+                delete_user(
+                    target_user_id
+                )
 
             except TelegramBadRequest as e:
 
@@ -1054,7 +1245,9 @@ async def send_broadcast(message: Message):
 
             except TelegramRetryAfter as e:
 
-                await asyncio.sleep(e.retry_after)
+                await asyncio.sleep(
+                    e.retry_after
+                )
 
                 try:
 
@@ -1078,7 +1271,10 @@ async def send_broadcast(message: Message):
             except TelegramForbiddenError:
 
                 blocked += 1
-                delete_user(target_user_id)
+
+                delete_user(
+                    target_user_id
+                )
 
             except TelegramBadRequest as e:
 
@@ -1098,14 +1294,16 @@ async def send_broadcast(message: Message):
 
                 failed += 1
 
-    admin_broadcast_waiting.discard(user_id)
+    admin_broadcast_waiting.discard(
+        user_id
+    )
 
     await message.answer(
         "✅ OMMAVIY XABAR YUBORILDI!\n\n"
-        f"📨 Muvaffaqiyatli yuborildi: {success}\n"
-        f"🚫 Botni bloklaganlar: {blocked}\n"
+        f"📨 Muvaffaqiyatli: {success}\n"
+        f"🚫 Bloklaganlar: {blocked}\n"
         f"❌ Xatolik: {failed}\n"
-        f"👥 Jami bazadagi foydalanuvchilar: {len(users)}",
+        f"👥 Jami: {len(users)}",
         reply_markup=admin_keyboard()
     )
 
@@ -1113,13 +1311,15 @@ async def send_broadcast(message: Message):
 
 
 # =========================================================
-# LOYIHA QO'SHISH — 1-BOSQICH
+# LOYIHA QO'SHISH BOSHLASH
 # =========================================================
 
 @dp.message(F.text == "➕ Loyiha qo‘shish")
 async def add_project_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -1127,10 +1327,19 @@ async def add_project_start(message: Message):
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
 
-    admin_project_name.pop(user_id, None)
-    admin_project_link.pop(user_id, None)
+    admin_project_name.pop(
+        user_id,
+        None
+    )
 
-    admin_project_waiting.add(user_id)
+    admin_project_link.pop(
+        user_id,
+        None
+    )
+
+    admin_project_waiting.add(
+        user_id
+    )
 
     await message.answer(
         "➕ Yangi loyiha qo‘shish\n\n"
@@ -1154,10 +1363,10 @@ async def save_project(message: Message):
     if user_id not in admin_project_waiting:
         return False
 
-    if not message.text or not message.text.strip():
+    if not message.text:
 
         await message.answer(
-            "❌ Ma'lumot bo‘sh bo‘lishi mumkin emas."
+            "❌ Ma'lumot yuboring."
         )
 
         return True
@@ -1165,17 +1374,19 @@ async def save_project(message: Message):
     text = message.text.strip()
 
     # =====================================================
-    # 1. LOYIHA NOMI
+    # 1. NOM
     # =====================================================
 
     if user_id not in admin_project_name:
 
-        admin_project_name[user_id] = text
+        admin_project_name[
+            user_id
+        ] = text
 
         await message.answer(
             "✅ Loyiha nomi qabul qilindi.\n\n"
             f"📌 Nomi: {text}\n\n"
-            "2️⃣ Endi loyiha havolasini yuboring.\n\n"
+            "2️⃣ Loyiha havolasini yuboring.\n\n"
             "Masalan:\n"
             "https://example.com"
         )
@@ -1191,7 +1402,10 @@ async def save_project(message: Message):
         link = text
 
         if not link.startswith(
-            ("http://", "https://")
+            (
+                "http://",
+                "https://"
+            )
         ):
 
             await message.answer(
@@ -1202,12 +1416,14 @@ async def save_project(message: Message):
 
             return True
 
-        admin_project_link[user_id] = link
+        admin_project_link[
+            user_id
+        ] = link
 
         await message.answer(
-            "✅ Loyiha havolasi qabul qilindi.\n\n"
-            f"🔗 Havola: {link}\n\n"
-            "3️⃣ Endi loyiha uchun telefon raqamini yuboring.\n\n"
+            "✅ Havola qabul qilindi.\n\n"
+            f"🔗 {link}\n\n"
+            "3️⃣ Endi loyiha telefon raqamini yuboring.\n\n"
             "Masalan:\n"
             "+998901234567"
         )
@@ -1215,16 +1431,22 @@ async def save_project(message: Message):
         return True
 
     # =====================================================
-    # 3. TELEFON RAQAMI
+    # 3. TELEFON
     # =====================================================
 
-    name = admin_project_name[user_id]
-    link = admin_project_link[user_id]
+    name = admin_project_name[
+        user_id
+    ]
+
+    link = admin_project_link[
+        user_id
+    ]
+
     phone = text
 
-    # Oddiy tekshiruv
     clean_phone = (
-        phone.replace(" ", "")
+        phone
+        .replace(" ", "")
         .replace("-", "")
         .replace("(", "")
         .replace(")", "")
@@ -1233,7 +1455,8 @@ async def save_project(message: Message):
     if not clean_phone.startswith("+"):
 
         await message.answer(
-            "❌ Telefon raqami + bilan boshlanishi kerak.\n\n"
+            "❌ Telefon raqami + bilan "
+            "boshlanishi kerak.\n\n"
             "Masalan:\n"
             "+998901234567"
         )
@@ -1243,9 +1466,7 @@ async def save_project(message: Message):
     if not clean_phone[1:].isdigit():
 
         await message.answer(
-            "❌ Telefon raqami noto‘g‘ri.\n\n"
-            "Masalan:\n"
-            "+998901234567"
+            "❌ Telefon raqami noto‘g‘ri."
         )
 
         return True
@@ -1273,18 +1494,25 @@ async def save_project(message: Message):
     conn.commit()
     conn.close()
 
-    # Holatlarni tozalash
-    admin_project_waiting.discard(user_id)
-    admin_project_name.pop(user_id, None)
-    admin_project_link.pop(user_id, None)
+    admin_project_waiting.discard(
+        user_id
+    )
+
+    admin_project_name.pop(
+        user_id,
+        None
+    )
+
+    admin_project_link.pop(
+        user_id,
+        None
+    )
 
     await message.answer(
         "✅ LOYIHA MUVAFFAQIYATLI QO‘SHILDI!\n\n"
         f"📌 Nomi: {name}\n"
         f"🔗 Havolasi: {link}\n"
-        f"📱 Telefon: {clean_phone}\n\n"
-        "Endi foydalanuvchilar loyiha bo‘limidan "
-        "🗳 Ovoz berish tugmasi orqali ovoz berish jarayonini boshlashi mumkin.",
+        f"📱 Telefon: {clean_phone}",
         reply_markup=admin_keyboard()
     )
 
@@ -1292,29 +1520,48 @@ async def save_project(message: Message):
 
 
 # =========================================================
-# YANGILIK QO'SHISH
+# YANGILIK QO'SHISH BOSHLASH
 # =========================================================
 
 @dp.message(F.text == "📰 Yangilik qo‘shish")
 async def add_news_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
 
-    admin_project_waiting.discard(user_id)
-    admin_project_name.pop(user_id, None)
-    admin_project_link.pop(user_id, None)
+    admin_project_waiting.discard(
+        user_id
+    )
 
-    admin_broadcast_waiting.discard(user_id)
+    admin_project_name.pop(
+        user_id,
+        None
+    )
 
-    admin_news_waiting.add(user_id)
+    admin_project_link.pop(
+        user_id,
+        None
+    )
+
+    admin_broadcast_waiting.discard(
+        user_id
+    )
+
+    admin_news_waiting.add(
+        user_id
+    )
 
     await message.answer(
-        "📰 Yangilik matnini yuboring.\n\n"
-        "Masalan:\n"
-        "Bugun yangi loyiha qo‘shildi."
+        "📰 YANGILIK QO‘SHISH\n\n"
+        "Matn yoki rasm yuboring.\n\n"
+        "📝 Matn yuborsangiz — matnli yangilik.\n"
+        "🖼 Rasm yuborsangiz — rasmli yangilik.\n\n"
+        "Rasmga caption yozsangiz, "
+        "caption ham saqlanadi."
     )
 
 
@@ -1332,55 +1579,114 @@ async def save_news(message: Message):
     if user_id not in admin_news_waiting:
         return False
 
-    if not message.text or not message.text.strip():
+    # =====================================================
+    # RASM + CAPTION
+    # =====================================================
+
+    if message.photo:
+
+        photo_id = message.photo[-1].file_id
+
+        text = message.caption or ""
+
+        conn = db_connect()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO news
+            (text, photo_id)
+            VALUES (?, ?)
+            """,
+            (
+                text,
+                photo_id
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        admin_news_waiting.discard(
+            user_id
+        )
 
         await message.answer(
-            "❌ Yangilik matni bo‘sh bo‘lishi mumkin emas."
+            "✅ Yangilik muvaffaqiyatli qo‘shildi!\n\n"
+            "🖼 Rasm saqlandi.",
+            reply_markup=admin_keyboard()
         )
 
         return True
 
-    text = message.text.strip()
+    # =====================================================
+    # FAQAT MATN
+    # =====================================================
 
-    conn = db_connect()
-    cursor = conn.cursor()
+    if message.text and message.text.strip():
 
-    cursor.execute(
-        "INSERT INTO news (text) VALUES (?)",
-        (text,)
-    )
+        text = message.text.strip()
 
-    conn.commit()
-    conn.close()
+        conn = db_connect()
+        cursor = conn.cursor()
 
-    admin_news_waiting.discard(user_id)
+        cursor.execute(
+            """
+            INSERT INTO news
+            (text, photo_id)
+            VALUES (?, NULL)
+            """,
+            (text,)
+        )
+
+        conn.commit()
+        conn.close()
+
+        admin_news_waiting.discard(
+            user_id
+        )
+
+        await message.answer(
+            "✅ Yangilik muvaffaqiyatli qo‘shildi!",
+            reply_markup=admin_keyboard()
+        )
+
+        return True
+
+    # =====================================================
+    # BOSHQA FORMAT
+    # =====================================================
 
     await message.answer(
-        "✅ Yangilik muvaffaqiyatli qo‘shildi!",
-        reply_markup=admin_keyboard()
+        "❌ Yangilik sifatida matn yoki "
+        "rasm yuboring."
     )
 
     return True
 
 
 # =========================================================
-# ADMIN LOYIHALAR RO'YXATI
+# ADMIN LOYIHALAR
 # =========================================================
 
 @dp.message(F.text == "📋 Loyihalar")
 async def admin_projects(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     conn = db_connect()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT id, name, link, phone
         FROM projects
         ORDER BY id DESC
-    """)
+        """
+    )
 
     projects = cursor.fetchall()
 
@@ -1415,17 +1721,34 @@ async def admin_projects(message: Message):
 @dp.message(F.text == "❌ Admin panelni yopish")
 async def close_admin(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
 
-    admin_project_waiting.discard(user_id)
-    admin_project_name.pop(user_id, None)
-    admin_project_link.pop(user_id, None)
+    admin_project_waiting.discard(
+        user_id
+    )
 
-    admin_news_waiting.discard(user_id)
-    admin_broadcast_waiting.discard(user_id)
+    admin_project_name.pop(
+        user_id,
+        None
+    )
+
+    admin_project_link.pop(
+        user_id,
+        None
+    )
+
+    admin_news_waiting.discard(
+        user_id
+    )
+
+    admin_broadcast_waiting.discard(
+        user_id
+    )
 
     lang = get_language(user_id)
 
@@ -1455,11 +1778,11 @@ async def other_messages(message: Message):
     if await send_broadcast(message):
         return
 
-    # Loyiha qo‘shish
+    # Loyiha qo'shish
     if await save_project(message):
         return
 
-    # Yangilik qo‘shish
+    # Yangilik qo'shish
     if await save_news(message):
         return
 
@@ -1472,9 +1795,17 @@ async def main():
 
     init_db()
 
-    print("=================================")
-    print("BOT ISHGA TUSHDI")
-    print("=================================")
+    print(
+        "================================="
+    )
+
+    print(
+        "BOT ISHGA TUSHDI"
+    )
+
+    print(
+        "================================="
+    )
 
     await dp.start_polling(bot)
 
@@ -1484,4 +1815,5 @@ async def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     asyncio.run(main())
