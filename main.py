@@ -22,7 +22,7 @@ from aiogram.exceptions import (
 # SOZLAMALAR
 # =========================================================
 
-BOT_TOKEN = "YANGI_BOT_TOKENINGIZNI_SHU_YERGA_YOZING"
+BOT_TOKEN = "8615736731:AAEfzzzWI-oPwjCtYG2raKE-ctqoLeHo1hY"
 
 ADMIN_IDS = [
     7998053914,
