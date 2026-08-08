@@ -1,8 +1,6 @@
 import asyncio
 import logging
-import os
 import sqlite3
-from contextlib import closing
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -18,15 +16,13 @@ from aiogram.exceptions import (
     TelegramForbiddenError,
     TelegramBadRequest,
     TelegramRetryAfter,
-    TelegramNetworkError,
-    TelegramServerError,
 )
 
 # =========================================================
 # SOZLAMALAR
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = "YANGI_BOT_TOKENINGIZNI_SHU_YERGA_YOZING"
 
 ADMIN_IDS = [
     7998053914,
@@ -39,20 +35,8 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# =========================================================
-# HOLATLAR
-# =========================================================
-
-waiting_for_phone = {}
-
-admin_project_waiting = set()
-admin_project_name = {}
-admin_project_link = {}
-
-admin_news_waiting = set()
-admin_broadcast_waiting = set()
 
 
 # =========================================================
@@ -60,118 +44,83 @@ admin_broadcast_waiting = set()
 # =========================================================
 
 def db_connect():
-    conn = sqlite3.connect(
-        DB_NAME,
-        timeout=30,
-        check_same_thread=False
-    )
-
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-
-    return conn
+    return sqlite3.connect(DB_NAME, timeout=30)
 
 
 def init_db():
 
-    with closing(db_connect()) as conn:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        cursor = conn.cursor()
+    # USERS
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            language TEXT DEFAULT 'uz',
+            phone TEXT,
+            voted INTEGER DEFAULT 0
+        )
+    """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                language TEXT DEFAULT 'uz',
-                phone TEXT,
-                voted INTEGER DEFAULT 0,
-                referrals INTEGER DEFAULT 0,
-                referred_by INTEGER,
-                reward_points INTEGER DEFAULT 0
-            )
-        """)
+    # PROJECTS
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            link TEXT NOT NULL,
+            phone TEXT
+        )
+    """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                link TEXT NOT NULL,
-                phone TEXT
-            )
-        """)
+    # NEWS
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT,
+            photo_id TEXT
+        )
+    """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS news (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT,
-                photo_id TEXT
-            )
-        """)
+    # REFERRALS
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inviter_id INTEGER NOT NULL,
+            invited_id INTEGER UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
-        # =====================================================
-        # ESKI DATABASE BILAN MOSLASH
-        # =====================================================
+    # Eski baza bilan moslash
+    cursor.execute("PRAGMA table_info(projects)")
+    project_columns = [
+        row[1] for row in cursor.fetchall()
+    ]
 
-        cursor.execute("PRAGMA table_info(users)")
-        user_columns = [
-            row[1] for row in cursor.fetchall()
-        ]
+    if "phone" not in project_columns:
+        cursor.execute(
+            "ALTER TABLE projects ADD COLUMN phone TEXT"
+        )
 
-        if "phone" not in user_columns:
-            cursor.execute(
-                "ALTER TABLE users ADD COLUMN phone TEXT"
-            )
+    cursor.execute("PRAGMA table_info(news)")
+    news_columns = [
+        row[1] for row in cursor.fetchall()
+    ]
 
-        if "voted" not in user_columns:
-            cursor.execute(
-                "ALTER TABLE users ADD COLUMN voted INTEGER DEFAULT 0"
-            )
+    if "photo_id" not in news_columns:
+        cursor.execute(
+            "ALTER TABLE news ADD COLUMN photo_id TEXT"
+        )
 
-        if "referrals" not in user_columns:
-            cursor.execute(
-                "ALTER TABLE users ADD COLUMN referrals INTEGER DEFAULT 0"
-            )
+    if "text" not in news_columns:
+        cursor.execute(
+            "ALTER TABLE news ADD COLUMN text TEXT"
+        )
 
-        if "referred_by" not in user_columns:
-            cursor.execute(
-                "ALTER TABLE users ADD COLUMN referred_by INTEGER"
-            )
-
-        if "reward_points" not in user_columns:
-            cursor.execute(
-                "ALTER TABLE users ADD COLUMN reward_points INTEGER DEFAULT 0"
-            )
-
-        cursor.execute("PRAGMA table_info(projects)")
-        project_columns = [
-            row[1] for row in cursor.fetchall()
-        ]
-
-        if "phone" not in project_columns:
-            cursor.execute(
-                "ALTER TABLE projects ADD COLUMN phone TEXT"
-            )
-
-        cursor.execute("PRAGMA table_info(news)")
-        news_columns = [
-            row[1] for row in cursor.fetchall()
-        ]
-
-        if "photo_id" not in news_columns:
-            cursor.execute(
-                "ALTER TABLE news ADD COLUMN photo_id TEXT"
-            )
-
-        if "text" not in news_columns:
-            cursor.execute(
-                "ALTER TABLE news ADD COLUMN text TEXT"
-            )
-
-        conn.commit()
-
-    logging.info("Database tayyor.")
+    conn.commit()
+    conn.close()
 
 
 # =========================================================
@@ -180,244 +129,106 @@ def init_db():
 
 def add_user(user_id, username, first_name):
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute("""
+        INSERT OR IGNORE INTO users
+        (user_id, username, first_name)
+        VALUES (?, ?, ?)
+    """, (
+        user_id,
+        username,
+        first_name
+    ))
 
-            cursor = conn.cursor()
-
-            cursor.execute("""
-                INSERT OR IGNORE INTO users
-                (user_id, username, first_name)
-                VALUES (?, ?, ?)
-            """, (
-                user_id,
-                username,
-                first_name
-            ))
-
-            cursor.execute("""
-                UPDATE users
-                SET username = ?,
-                    first_name = ?
-                WHERE user_id = ?
-            """, (
-                username,
-                first_name,
-                user_id
-            ))
-
-            conn.commit()
-
-    except Exception as e:
-        logging.error(f"add_user xatosi: {e}")
+    conn.commit()
+    conn.close()
 
 
 def set_language(user_id, language):
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        UPDATE users
+        SET language = ?
+        WHERE user_id = ?
+        """,
+        (language, user_id)
+    )
 
-            conn.execute(
-                """
-                UPDATE users
-                SET language = ?
-                WHERE user_id = ?
-                """,
-                (language, user_id)
-            )
-
-            conn.commit()
-
-    except Exception as e:
-        logging.error(f"set_language xatosi: {e}")
+    conn.commit()
+    conn.close()
 
 
 def get_language(user_id):
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        SELECT language
+        FROM users
+        WHERE user_id = ?
+        """,
+        (user_id,)
+    )
 
-            cursor = conn.cursor()
+    result = cursor.fetchone()
 
-            cursor.execute(
-                """
-                SELECT language
-                FROM users
-                WHERE user_id = ?
-                """,
-                (user_id,)
-            )
+    conn.close()
 
-            result = cursor.fetchone()
-
-            if result:
-                return result[0]
-
-    except Exception as e:
-        logging.error(f"get_language xatosi: {e}")
+    if result:
+        return result[0]
 
     return "uz"
 
 
 def save_user_phone(user_id, phone):
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        UPDATE users
+        SET phone = ?
+        WHERE user_id = ?
+        """,
+        (phone, user_id)
+    )
 
-            conn.execute(
-                """
-                UPDATE users
-                SET phone = ?,
-                    voted = 1
-                WHERE user_id = ?
-                """,
-                (phone, user_id)
-            )
-
-            conn.commit()
-
-    except Exception as e:
-        logging.error(f"Telefon saqlash xatosi: {e}")
+    conn.commit()
+    conn.close()
 
 
 def delete_user(user_id):
 
     try:
 
-        with closing(db_connect()) as conn:
+        conn = db_connect()
+        cursor = conn.cursor()
 
-            conn.execute(
-                """
-                DELETE FROM users
-                WHERE user_id = ?
-                """,
-                (user_id,)
-            )
+        cursor.execute(
+            """
+            DELETE FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,)
+        )
 
-            conn.commit()
-
-    except Exception as e:
-        logging.error(f"User delete xatosi: {e}")
-
-
-# =========================================================
-# REFERRAL
-# =========================================================
-
-def process_referral(new_user_id, referrer_id):
-
-    if new_user_id == referrer_id:
-        return False
-
-    try:
-
-        with closing(db_connect()) as conn:
-
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT referred_by
-                FROM users
-                WHERE user_id = ?
-                """,
-                (new_user_id,)
-            )
-
-            result = cursor.fetchone()
-
-            if not result:
-                return False
-
-            # Oldin boshqa odam taklif qilgan bo'lsa
-            if result[0] is not None:
-                return False
-
-            # Referrer mavjudmi?
-            cursor.execute(
-                """
-                SELECT user_id
-                FROM users
-                WHERE user_id = ?
-                """,
-                (referrer_id,)
-            )
-
-            if not cursor.fetchone():
-                return False
-
-            # Kim taklif qilganini saqlaymiz
-            cursor.execute(
-                """
-                UPDATE users
-                SET referred_by = ?
-                WHERE user_id = ?
-                """,
-                (
-                    referrer_id,
-                    new_user_id
-                )
-            )
-
-            # Referral +1 va ball +1
-            cursor.execute(
-                """
-                UPDATE users
-                SET referrals = COALESCE(referrals, 0) + 1,
-                    reward_points = COALESCE(reward_points, 0) + 1
-                WHERE user_id = ?
-                """,
-                (referrer_id,)
-            )
-
-            conn.commit()
-
-            return True
+        conn.commit()
+        conn.close()
 
     except Exception as e:
 
         logging.error(
-            f"Referral xatosi: {e}"
+            f"Foydalanuvchini o‘chirish xatosi: {e}"
         )
-
-        return False
-
-
-def get_referral_info(user_id):
-
-    try:
-
-        with closing(db_connect()) as conn:
-
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT
-                    COALESCE(referrals, 0),
-                    COALESCE(reward_points, 0)
-                FROM users
-                WHERE user_id = ?
-                """,
-                (user_id,)
-            )
-
-            result = cursor.fetchone()
-
-            if result:
-                return result[0], result[1]
-
-    except Exception as e:
-
-        logging.error(
-            f"Referral info xatosi: {e}"
-        )
-
-    return 0, 0
 
 
 # =========================================================
@@ -455,15 +266,21 @@ def uz_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📌 Loyihalar")
-            ],
-            [
-                KeyboardButton(text="📰 Yangiliklar"),
-                KeyboardButton(text="❓ Yordam")
+                KeyboardButton(
+                    text="📌 Loyihalar"
+                )
             ],
             [
                 KeyboardButton(
-                    text="🎁 Do‘stlarni taklif qilish"
+                    text="👥 Do‘stlarni taklif qilish"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="📰 Yangiliklar"
+                ),
+                KeyboardButton(
+                    text="❓ Yordam"
                 )
             ]
         ],
@@ -476,15 +293,21 @@ def ru_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📌 Проекты")
-            ],
-            [
-                KeyboardButton(text="📰 Новости"),
-                KeyboardButton(text="❓ Помощь")
+                KeyboardButton(
+                    text="📌 Проекты"
+                )
             ],
             [
                 KeyboardButton(
-                    text="🎁 Пригласить друзей"
+                    text="👥 Пригласить друзей"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="📰 Новости"
+                ),
+                KeyboardButton(
+                    text="❓ Помощь"
                 )
             ]
         ],
@@ -497,7 +320,9 @@ def admin_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="📊 Statistika")
+                KeyboardButton(
+                    text="📊 Statistika"
+                )
             ],
             [
                 KeyboardButton(
@@ -572,6 +397,21 @@ def phone_keyboard_ru():
 
 
 # =========================================================
+# HOLATLAR
+# =========================================================
+
+waiting_for_phone = {}
+
+admin_project_waiting = set()
+admin_project_name = {}
+admin_project_link = {}
+
+admin_news_waiting = set()
+
+admin_broadcast_waiting = set()
+
+
+# =========================================================
 # START + REFERRAL
 # =========================================================
 
@@ -580,51 +420,90 @@ async def start_handler(message: Message):
 
     user_id = message.from_user.id
 
-    # Foydalanuvchini bazaga qo'shish
     add_user(
         user_id,
         message.from_user.username,
         message.from_user.first_name
     )
 
-    # /start REFERRER_ID
+    # =====================================================
+    # REFERRAL
+    # =====================================================
+
     args = message.text.split(maxsplit=1)
 
     if len(args) > 1:
 
-        try:
+        referral_code = args[1]
 
-            referrer_id = int(args[1])
+        if referral_code.startswith("ref_"):
 
-            referral_added = process_referral(
-                user_id,
-                referrer_id
-            )
+            try:
 
-            if referral_added:
+                inviter_id = int(
+                    referral_code.replace(
+                        "ref_",
+                        ""
+                    )
+                )
 
-                try:
+                # O‘zini o‘zi taklif qilish mumkin emas
+                if inviter_id != user_id:
 
-                    referrals, points = get_referral_info(
-                        referrer_id
+                    conn = db_connect()
+                    cursor = conn.cursor()
+
+                    # Taklif qiluvchi mavjudmi?
+                    cursor.execute(
+                        """
+                        SELECT user_id
+                        FROM users
+                        WHERE user_id = ?
+                        """,
+                        (inviter_id,)
                     )
 
-                    await bot.send_message(
-                        referrer_id,
-                        "🎉 Yangi foydalanuvchi sizning "
-                        "taklif havolangiz orqali botga qo‘shildi!\n\n"
-                        f"👥 Taklif qilganlaringiz: {referrals}\n"
-                        f"⭐ Mukofot ballaringiz: {points}"
+                    inviter_exists = cursor.fetchone()
+
+                    # Bu foydalanuvchi oldin taklif qilinganmi?
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM referrals
+                        WHERE invited_id = ?
+                        """,
+                        (user_id,)
                     )
 
-                except Exception as e:
+                    already_invited = cursor.fetchone()
 
-                    logging.error(
-                        f"Referral notification xatosi: {e}"
-                    )
+                    if inviter_exists and not already_invited:
 
-        except ValueError:
-            pass
+                        cursor.execute(
+                            """
+                            INSERT INTO referrals
+                            (inviter_id, invited_id)
+                            VALUES (?, ?)
+                            """,
+                            (
+                                inviter_id,
+                                user_id
+                            )
+                        )
+
+                        conn.commit()
+
+                        logging.info(
+                            f"Referral: {inviter_id} -> {user_id}"
+                        )
+
+                    conn.close()
+
+            except Exception as e:
+
+                logging.error(
+                    f"Referral xatosi: {e}"
+                )
 
     await message.answer(
         "Assalomu alaykum! 👋\n\n"
@@ -674,70 +553,126 @@ async def language_ru(callback: CallbackQuery):
 
 
 # =========================================================
-# REFERRAL UZ
+# DO‘STLARNI TAKLIF QILISH UZ
 # =========================================================
 
-@dp.message(F.text == "🎁 Do‘stlarni taklif qilish")
-async def referral_uz(message: Message):
+@dp.message(F.text == "👥 Do‘stlarni taklif qilish")
+async def invite_friends_uz(message: Message):
 
     user_id = message.from_user.id
 
-    bot_info = await bot.get_me()
-
-    referral_link = (
-        f"https://t.me/{bot_info.username}"
-        f"?start={user_id}"
+    add_user(
+        user_id,
+        message.from_user.username,
+        message.from_user.first_name
     )
 
-    referrals, points = get_referral_info(
-        user_id
-    )
+    try:
 
-    await message.answer(
-        "🎁 <b>DO‘STLARNI TAKLIF QILING</b>\n\n"
-        "Quyidagi havolani do‘stlaringizga yuboring.\n\n"
-        "Do‘stingiz botga kirib ro‘yxatdan "
-        "o‘tganda sizga 1 ta referral ball beriladi.\n\n"
-        f"🔗 <b>Sizning havolangiz:</b>\n"
-        f"{referral_link}\n\n"
-        f"👥 Taklif qilganlaringiz: <b>{referrals}</b>\n"
-        f"⭐ Mukofot ballaringiz: <b>{points}</b>",
-        parse_mode="HTML"
-    )
+        me = await bot.get_me()
+
+        referral_link = (
+            f"https://t.me/{me.username}?start=ref_{user_id}"
+        )
+
+        conn = db_connect()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM referrals
+            WHERE inviter_id = ?
+            """,
+            (user_id,)
+        )
+
+        invited_count = cursor.fetchone()[0]
+
+        conn.close()
+
+        await message.answer(
+            "👥 <b>Do‘stlarni taklif qilish</b>\n\n"
+            "Quyidagi shaxsiy havolangizni "
+            "do‘stlaringizga yuborishingiz mumkin:\n\n"
+            f"🔗 <code>{referral_link}</code>\n\n"
+            f"👤 Siz taklif qilganlar: "
+            f"<b>{invited_count}</b> ta\n\n"
+            "Do‘stingiz havolani ochib botni "
+            "ishga tushirganda taklif hisoblanadi.",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Referral link xatosi: {e}"
+        )
+
+        await message.answer(
+            "❌ Havolani yaratishda xatolik yuz berdi."
+        )
 
 
 # =========================================================
-# REFERRAL RU
+# DO‘STLARNI TAKLIF QILISH RU
 # =========================================================
 
-@dp.message(F.text == "🎁 Пригласить друзей")
-async def referral_ru(message: Message):
+@dp.message(F.text == "👥 Пригласить друзей")
+async def invite_friends_ru(message: Message):
 
     user_id = message.from_user.id
 
-    bot_info = await bot.get_me()
-
-    referral_link = (
-        f"https://t.me/{bot_info.username}"
-        f"?start={user_id}"
+    add_user(
+        user_id,
+        message.from_user.username,
+        message.from_user.first_name
     )
 
-    referrals, points = get_referral_info(
-        user_id
-    )
+    try:
 
-    await message.answer(
-        "🎁 <b>ПРИГЛАСИТЕ ДРУЗЕЙ</b>\n\n"
-        "Отправьте эту ссылку своим друзьям.\n\n"
-        "Когда друг зайдёт в бот и "
-        "зарегистрируется, вы получите "
-        "1 реферальный балл.\n\n"
-        f"🔗 <b>Ваша ссылка:</b>\n"
-        f"{referral_link}\n\n"
-        f"👥 Приглашено: <b>{referrals}</b>\n"
-        f"⭐ Баллы: <b>{points}</b>",
-        parse_mode="HTML"
-    )
+        me = await bot.get_me()
+
+        referral_link = (
+            f"https://t.me/{me.username}?start=ref_{user_id}"
+        )
+
+        conn = db_connect()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM referrals
+            WHERE inviter_id = ?
+            """,
+            (user_id,)
+        )
+
+        invited_count = cursor.fetchone()[0]
+
+        conn.close()
+
+        await message.answer(
+            "👥 <b>Пригласить друзей</b>\n\n"
+            "Ваша персональная ссылка:\n\n"
+            f"🔗 <code>{referral_link}</code>\n\n"
+            f"👤 Приглашено: "
+            f"<b>{invited_count}</b>\n\n"
+            "Когда друг откроет ссылку и запустит "
+            "бота, приглашение будет засчитано.",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Referral link xatosi: {e}"
+        )
+
+        await message.answer(
+            "❌ Не удалось создать ссылку."
+        )
 
 
 # =========================================================
@@ -753,31 +688,18 @@ async def projects_uz(message: Message):
         message.from_user.first_name
     )
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute("""
+        SELECT id, name, link
+        FROM projects
+        ORDER BY id DESC
+    """)
 
-            cursor = conn.cursor()
+    projects = cursor.fetchall()
 
-            cursor.execute("""
-                SELECT id, name, link
-                FROM projects
-                ORDER BY id DESC
-            """)
-
-            projects = cursor.fetchall()
-
-    except Exception as e:
-
-        logging.error(
-            f"Projects UZ xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Loyihalarni olishda xatolik."
-        )
-
-        return
+    conn.close()
 
     if not projects:
 
@@ -808,8 +730,7 @@ async def projects_uz(message: Message):
 
         await message.answer(
             f"📌 <b>{name}</b>\n\n"
-            "Ovoz berish uchun quyidagi "
-            "tugmani bosing.",
+            "Ovoz berish uchun quyidagi tugmani bosing.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -828,31 +749,18 @@ async def projects_ru(message: Message):
         message.from_user.first_name
     )
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute("""
+        SELECT id, name, link
+        FROM projects
+        ORDER BY id DESC
+    """)
 
-            cursor = conn.cursor()
+    projects = cursor.fetchall()
 
-            cursor.execute("""
-                SELECT id, name, link
-                FROM projects
-                ORDER BY id DESC
-            """)
-
-            projects = cursor.fetchall()
-
-    except Exception as e:
-
-        logging.error(
-            f"Projects RU xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Ошибка при получении проектов."
-        )
-
-        return
+    conn.close()
 
     if not projects:
 
@@ -890,7 +798,7 @@ async def projects_ru(message: Message):
 
 
 # =========================================================
-# OVOZ BERISH
+# OVOZ BERISH BOSHLASH
 # =========================================================
 
 @dp.callback_query(F.data.startswith("vote_"))
@@ -914,35 +822,21 @@ async def vote_start(callback: CallbackQuery):
 
         return
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        SELECT id, name
+        FROM projects
+        WHERE id = ?
+        """,
+        (project_id,)
+    )
 
-            cursor = conn.cursor()
+    project = cursor.fetchone()
 
-            cursor.execute(
-                """
-                SELECT id, name
-                FROM projects
-                WHERE id = ?
-                """,
-                (project_id,)
-            )
-
-            project = cursor.fetchone()
-
-    except Exception as e:
-
-        logging.error(
-            f"Vote DB xatosi: {e}"
-        )
-
-        await callback.answer(
-            "❌ Vaqtinchalik xatolik.",
-            show_alert=True
-        )
-
-        return
+    conn.close()
 
     if not project:
 
@@ -965,8 +859,8 @@ async def vote_start(callback: CallbackQuery):
 
         await callback.message.answer(
             f"🗳 <b>{project[1]}</b>\n\n"
-            "Для продолжения голосования "
-            "отправьте свой номер телефона.\n\n"
+            "Для продолжения отправьте "
+            "свой номер телефона.\n\n"
             "📱 Нажмите кнопку ниже:",
             reply_markup=phone_keyboard_ru(),
             parse_mode="HTML"
@@ -987,7 +881,7 @@ async def vote_start(callback: CallbackQuery):
 
 
 # =========================================================
-# TELEFON
+# TELEFON QABUL QILISH
 # =========================================================
 
 @dp.message(F.contact)
@@ -1021,34 +915,21 @@ async def receive_phone(message: Message):
         phone
     )
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        SELECT id, name, link
+        FROM projects
+        WHERE id = ?
+        """,
+        (project_id,)
+    )
 
-            cursor = conn.cursor()
+    project = cursor.fetchone()
 
-            cursor.execute(
-                """
-                SELECT id, name, link
-                FROM projects
-                WHERE id = ?
-                """,
-                (project_id,)
-            )
-
-            project = cursor.fetchone()
-
-    except Exception as e:
-
-        logging.error(
-            f"Phone DB xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Vaqtinchalik xatolik."
-        )
-
-        return
+    conn.close()
 
     if not project:
 
@@ -1080,7 +961,8 @@ async def receive_phone(message: Message):
                     text=(
                         "🔗 Ovoz berish"
                         if lang == "uz"
-                        else "🔗 Голосовать"
+                        else
+                        "🔗 Голосовать"
                     ),
                     url=project_link
                 )
@@ -1157,7 +1039,7 @@ async def cancel_phone(message: Message):
 
 
 # =========================================================
-# YANGILIK UZ
+# YANGILIKLAR UZ
 # =========================================================
 
 @dp.message(F.text == "📰 Yangiliklar")
@@ -1169,31 +1051,18 @@ async def news_uz(message: Message):
         message.from_user.first_name
     )
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute("""
+        SELECT text, photo_id
+        FROM news
+        ORDER BY id DESC
+    """)
 
-            cursor = conn.cursor()
+    news = cursor.fetchall()
 
-            cursor.execute("""
-                SELECT text, photo_id
-                FROM news
-                ORDER BY id DESC
-            """)
-
-            news = cursor.fetchall()
-
-    except Exception as e:
-
-        logging.error(
-            f"News UZ xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Yangiliklarni olishda xatolik."
-        )
-
-        return
+    conn.close()
 
     if not news:
 
@@ -1205,30 +1074,22 @@ async def news_uz(message: Message):
 
     for text, photo_id in news:
 
-        try:
+        if photo_id:
 
-            if photo_id:
+            await message.answer_photo(
+                photo=photo_id,
+                caption=text if text else None
+            )
 
-                await message.answer_photo(
-                    photo=photo_id,
-                    caption=text if text else None
-                )
+        elif text:
 
-            elif text:
-
-                await message.answer(
-                    f"📰 {text}"
-                )
-
-        except Exception as e:
-
-            logging.error(
-                f"News yuborish xatosi: {e}"
+            await message.answer(
+                f"📰 {text}"
             )
 
 
 # =========================================================
-# YANGILIK RU
+# YANGILIKLAR RU
 # =========================================================
 
 @dp.message(F.text == "📰 Новости")
@@ -1240,31 +1101,18 @@ async def news_ru(message: Message):
         message.from_user.first_name
     )
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute("""
+        SELECT text, photo_id
+        FROM news
+        ORDER BY id DESC
+    """)
 
-            cursor = conn.cursor()
+    news = cursor.fetchall()
 
-            cursor.execute("""
-                SELECT text, photo_id
-                FROM news
-                ORDER BY id DESC
-            """)
-
-            news = cursor.fetchall()
-
-    except Exception as e:
-
-        logging.error(
-            f"News RU xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Ошибка при получении новостей."
-        )
-
-        return
+    conn.close()
 
     if not news:
 
@@ -1276,30 +1124,22 @@ async def news_ru(message: Message):
 
     for text, photo_id in news:
 
-        try:
+        if photo_id:
 
-            if photo_id:
+            await message.answer_photo(
+                photo=photo_id,
+                caption=text if text else None
+            )
 
-                await message.answer_photo(
-                    photo=photo_id,
-                    caption=text if text else None
-                )
+        elif text:
 
-            elif text:
-
-                await message.answer(
-                    f"📰 {text}"
-                )
-
-        except Exception as e:
-
-            logging.error(
-                f"News RU yuborish xatosi: {e}"
+            await message.answer(
+                f"📰 {text}"
             )
 
 
 # =========================================================
-# YORDAM
+# YORDAM UZ
 # =========================================================
 
 @dp.message(F.text == "❓ Yordam")
@@ -1308,12 +1148,17 @@ async def help_uz(message: Message):
     await message.answer(
         "❓ Yordam\n\n"
         "📌 Loyihalar — loyihalarni ko‘rish\n"
+        "👥 Do‘stlarni taklif qilish — "
+        "shaxsiy taklif havolangiz\n"
         "📰 Yangiliklar — yangiliklarni ko‘rish\n"
-        "🎁 Do‘stlarni taklif qilish — referral tizimi\n"
         "🗳 Ovoz berish — loyiha uchun ovoz berish\n\n"
         "Muammo bo‘lsa, administratorga murojaat qiling."
     )
 
+
+# =========================================================
+# YORDAM RU
+# =========================================================
 
 @dp.message(F.text == "❓ Помощь")
 async def help_ru(message: Message):
@@ -1321,10 +1166,12 @@ async def help_ru(message: Message):
     await message.answer(
         "❓ Помощь\n\n"
         "📌 Проекты — просмотр проектов\n"
+        "👥 Пригласить друзей — "
+        "ваша персональная ссылка\n"
         "📰 Новости — просмотр новостей\n"
-        "🎁 Пригласить друзей — реферальная система\n"
         "🗳 Голосовать — голосование за проект\n\n"
-        "При возникновении проблем обратитесь к администратору."
+        "При возникновении проблем обратитесь "
+        "к администратору."
     )
 
 
@@ -1348,6 +1195,7 @@ async def admin_command(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
 
@@ -1364,97 +1212,81 @@ async def admin_command(message: Message):
 @dp.message(F.text == "📊 Statistika")
 async def statistics(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
 
-            cursor = conn.cursor()
+    total_users = cursor.fetchone()[0]
 
-            cursor.execute(
-                "SELECT COUNT(*) FROM users"
-            )
-            total_users = cursor.fetchone()[0]
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM users
+        WHERE voted = 1
+        """
+    )
 
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM users
-                WHERE voted = 1
-                """
-            )
-            voted_users = cursor.fetchone()[0]
+    voted_users = cursor.fetchone()[0]
 
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM users
-                WHERE voted = 0
-                """
-            )
-            not_voted = cursor.fetchone()[0]
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM users
+        WHERE voted = 0
+        """
+    )
 
-            cursor.execute(
-                "SELECT COUNT(*) FROM projects"
-            )
-            total_projects = cursor.fetchone()[0]
+    not_voted = cursor.fetchone()[0]
 
-            cursor.execute(
-                "SELECT COUNT(*) FROM news"
-            )
-            total_news = cursor.fetchone()[0]
+    cursor.execute(
+        "SELECT COUNT(*) FROM projects"
+    )
 
-            cursor.execute(
-                """
-                SELECT COALESCE(SUM(referrals), 0)
-                FROM users
-                """
-            )
-            total_referrals = cursor.fetchone()[0]
+    total_projects = cursor.fetchone()[0]
 
-            cursor.execute(
-                """
-                SELECT COALESCE(SUM(reward_points), 0)
-                FROM users
-                """
-            )
-            total_points = cursor.fetchone()[0]
+    cursor.execute(
+        "SELECT COUNT(*) FROM news"
+    )
 
-    except Exception as e:
+    total_news = cursor.fetchone()[0]
 
-        logging.error(
-            f"Statistika xatosi: {e}"
-        )
+    cursor.execute(
+        "SELECT COUNT(*) FROM referrals"
+    )
 
-        await message.answer(
-            "❌ Statistikani olishda xatolik."
-        )
+    total_referrals = cursor.fetchone()[0]
 
-        return
+    conn.close()
 
     await message.answer(
-        "📊 <b>STATISTIKA</b>\n\n"
+        "📊 STATISTIKA\n\n"
         f"👥 Jami foydalanuvchilar: {total_users}\n"
         f"🗳 Ovoz berganlar: {voted_users}\n"
         f"⏳ Ovoz bermaganlar: {not_voted}\n"
+        f"👥 Taklif qilinganlar: {total_referrals}\n"
         f"📌 Jami loyihalar: {total_projects}\n"
-        f"📰 Jami yangiliklar: {total_news}\n"
-        f"👥 Jami referral: {total_referrals}\n"
-        f"⭐ Jami referral ball: {total_points}",
-        parse_mode="HTML"
+        f"📰 Jami yangiliklar: {total_news}"
     )
 
 
 # =========================================================
-# OMMAVIY XABAR
+# OMMAVIY XABAR BOSHLASH
 # =========================================================
 
 @dp.message(F.text == "📢 Ommaviy xabar")
 async def broadcast_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -1462,6 +1294,7 @@ async def broadcast_start(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_news_waiting.discard(user_id)
 
     admin_broadcast_waiting.add(user_id)
@@ -1473,74 +1306,15 @@ async def broadcast_start(message: Message):
         "📝 Matn\n"
         "🖼 Rasm\n"
         "🎥 Video\n"
-        "📄 Hujjat"
+        "📄 Hujjat\n\n"
+        "⚠️ Siz yuborgan xabar barcha "
+        "foydalanuvchilarga yuboriladi."
     )
 
 
-async def send_to_user(
-    message: Message,
-    target_user_id: int
-):
-
-    for attempt in range(3):
-
-        try:
-
-            if message.photo:
-
-                await bot.send_photo(
-                    chat_id=target_user_id,
-                    photo=message.photo[-1].file_id,
-                    caption=message.caption
-                )
-
-            else:
-
-                await bot.copy_message(
-                    chat_id=target_user_id,
-                    from_chat_id=message.chat.id,
-                    message_id=message.message_id
-                )
-
-            return "success"
-
-        except TelegramRetryAfter as e:
-
-            await asyncio.sleep(
-                min(int(e.retry_after) + 1, 60)
-            )
-
-        except TelegramForbiddenError:
-
-            return "blocked"
-
-        except TelegramBadRequest as e:
-
-            logging.error(
-                f"Broadcast BadRequest {target_user_id}: {e}"
-            )
-
-            return "failed"
-
-        except (
-            TelegramNetworkError,
-            TelegramServerError
-        ):
-
-            await asyncio.sleep(
-                2 ** attempt
-            )
-
-        except Exception as e:
-
-            logging.error(
-                f"Broadcast xatosi {target_user_id}: {e}"
-            )
-
-            return "failed"
-
-    return "failed"
-
+# =========================================================
+# OMMAVIY XABAR
+# =========================================================
 
 async def send_broadcast(message: Message):
 
@@ -1552,52 +1326,103 @@ async def send_broadcast(message: Message):
     if user_id not in admin_broadcast_waiting:
         return False
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        "SELECT user_id FROM users"
+    )
 
-            cursor = conn.cursor()
+    users = cursor.fetchall()
 
-            cursor.execute(
-                "SELECT user_id FROM users"
-            )
+    conn.close()
 
-            users = [
-                row[0]
-                for row in cursor.fetchall()
-            ]
+    if not users:
 
-    except Exception as e:
-
-        logging.error(
-            f"Broadcast DB xatosi: {e}"
-        )
+        admin_broadcast_waiting.discard(user_id)
 
         await message.answer(
-            "❌ Foydalanuvchilarni olishda xatolik."
+            "❌ Bazada foydalanuvchilar topilmadi.",
+            reply_markup=admin_keyboard()
         )
 
         return True
 
     await message.answer(
-        "⏳ Ommaviy xabar yuborilmoqda..."
+        "⏳ Xabar barcha foydalanuvchilarga "
+        "yuborilmoqda..."
     )
 
     success = 0
     blocked = 0
     failed = 0
 
-    for index, target_user_id in enumerate(users):
+    for row in users:
 
-        result = await send_to_user(
-            message,
-            target_user_id
-        )
+        target_user_id = row[0]
 
-        if result == "success":
+        try:
+
+            if message.photo:
+
+                photo_id = message.photo[-1].file_id
+                caption = message.caption
+
+                await bot.send_photo(
+                    chat_id=target_user_id,
+                    photo=photo_id,
+                    caption=caption
+                )
+
+            else:
+
+                await bot.copy_message(
+                    chat_id=target_user_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+
             success += 1
 
-        elif result == "blocked":
+            # Telegram limitlarini hisobga olish
+            await asyncio.sleep(0.05)
+
+        except TelegramRetryAfter as e:
+
+            await asyncio.sleep(
+                e.retry_after
+            )
+
+            try:
+
+                if message.photo:
+
+                    await bot.send_photo(
+                        chat_id=target_user_id,
+                        photo=message.photo[-1].file_id,
+                        caption=message.caption
+                    )
+
+                else:
+
+                    await bot.copy_message(
+                        chat_id=target_user_id,
+                        from_chat_id=message.chat.id,
+                        message_id=message.message_id
+                    )
+
+                success += 1
+
+            except Exception as e2:
+
+                logging.error(
+                    f"Qayta yuborishda xato "
+                    f"{target_user_id}: {e2}"
+                )
+
+                failed += 1
+
+        except TelegramForbiddenError:
 
             blocked += 1
 
@@ -1605,40 +1430,50 @@ async def send_broadcast(message: Message):
                 target_user_id
             )
 
-        else:
+        except TelegramBadRequest as e:
+
+            logging.error(
+                f"TelegramBadRequest "
+                f"{target_user_id}: {e}"
+            )
 
             failed += 1
 
-        await asyncio.sleep(0.08)
+        except Exception as e:
 
-        if index % 20 == 0:
-            await asyncio.sleep(0)
+            logging.error(
+                f"Xabar yuborishda xato "
+                f"{target_user_id}: {e}"
+            )
+
+            failed += 1
 
     admin_broadcast_waiting.discard(
         user_id
     )
 
     await message.answer(
-        "✅ <b>OMMAVIY XABAR YUBORILDI!</b>\n\n"
+        "✅ OMMAVIY XABAR YUBORILDI!\n\n"
         f"📨 Muvaffaqiyatli: {success}\n"
         f"🚫 Bloklaganlar: {blocked}\n"
         f"❌ Xatolik: {failed}\n"
         f"👥 Jami: {len(users)}",
-        reply_markup=admin_keyboard(),
-        parse_mode="HTML"
+        reply_markup=admin_keyboard()
     )
 
     return True
 
 
 # =========================================================
-# LOYIHA QO'SHISH
+# LOYIHA QO‘SHISH
 # =========================================================
 
 @dp.message(F.text == "➕ Loyiha qo‘shish")
 async def add_project_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -1646,17 +1481,29 @@ async def add_project_start(message: Message):
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
 
-    admin_project_name.pop(user_id, None)
-    admin_project_link.pop(user_id, None)
-
-    admin_project_waiting.add(user_id)
-
-    await message.answer(
-        "➕ <b>YANGI LOYIHA</b>\n\n"
-        "1️⃣ Loyiha nomini yuboring.",
-        parse_mode="HTML"
+    admin_project_name.pop(
+        user_id,
+        None
     )
 
+    admin_project_link.pop(
+        user_id,
+        None
+    )
+
+    admin_project_waiting.add(
+        user_id
+    )
+
+    await message.answer(
+        "➕ Yangi loyiha qo‘shish\n\n"
+        "1️⃣ Loyiha nomini yuboring."
+    )
+
+
+# =========================================================
+# LOYIHA SAQLASH
+# =========================================================
 
 async def save_project(message: Message):
 
@@ -1678,27 +1525,32 @@ async def save_project(message: Message):
 
     text = message.text.strip()
 
-    # NOM
+    # 1. NOM
     if user_id not in admin_project_name:
 
-        admin_project_name[user_id] = text
+        admin_project_name[
+            user_id
+        ] = text
 
         await message.answer(
             "✅ Loyiha nomi qabul qilindi.\n\n"
-            "2️⃣ Endi loyiha havolasini yuboring.\n\n"
+            "2️⃣ Loyiha havolasini yuboring.\n\n"
             "Masalan:\n"
             "https://example.com"
         )
 
         return True
 
-    # HAVOLA
+    # 2. HAVOLA
     if user_id not in admin_project_link:
 
         link = text
 
         if not link.startswith(
-            ("http://", "https://")
+            (
+                "http://",
+                "https://"
+            )
         ):
 
             await message.answer(
@@ -1709,23 +1561,27 @@ async def save_project(message: Message):
 
             return True
 
-        admin_project_link[user_id] = link
+        admin_project_link[
+            user_id
+        ] = link
 
         await message.answer(
             "✅ Havola qabul qilindi.\n\n"
-            "3️⃣ Endi loyiha telefon raqamini yuboring.\n\n"
+            "3️⃣ Endi loyiha telefon raqamini "
+            "yuboring.\n\n"
             "Masalan:\n"
             "+998901234567"
         )
 
         return True
 
-    # TELEFON
+    # 3. TELEFON
     name = admin_project_name[user_id]
     link = admin_project_link[user_id]
+    phone = text
 
     clean_phone = (
-        text
+        phone
         .replace(" ", "")
         .replace("-", "")
         .replace("(", "")
@@ -1735,7 +1591,8 @@ async def save_project(message: Message):
     if not clean_phone.startswith("+"):
 
         await message.answer(
-            "❌ Telefon raqami + bilan boshlanishi kerak."
+            "❌ Telefon raqami + bilan "
+            "boshlanishi kerak."
         )
 
         return True
@@ -1748,61 +1605,50 @@ async def save_project(message: Message):
 
         return True
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
-
-            conn.execute(
-                """
-                INSERT INTO projects
-                (name, link, phone)
-                VALUES (?, ?, ?)
-                """,
-                (
-                    name,
-                    link,
-                    clean_phone
-                )
-            )
-
-            conn.commit()
-
-    except Exception as e:
-
-        logging.error(
-            f"Loyiha saqlash xatosi: {e}"
+    cursor.execute(
+        """
+        INSERT INTO projects
+        (name, link, phone)
+        VALUES (?, ?, ?)
+        """,
+        (
+            name,
+            link,
+            clean_phone
         )
+    )
 
-        await message.answer(
-            "❌ Loyihani saqlashda xatolik."
-        )
-
-        return True
+    conn.commit()
+    conn.close()
 
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
 
     await message.answer(
-        "✅ <b>LOYIHA MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
+        "✅ LOYIHA MUVAFFAQIYATLI QO‘SHILDI!\n\n"
         f"📌 Nomi: {name}\n"
         f"🔗 Havolasi: {link}\n"
         f"📱 Telefon: {clean_phone}",
-        reply_markup=admin_keyboard(),
-        parse_mode="HTML"
+        reply_markup=admin_keyboard()
     )
 
     return True
 
 
 # =========================================================
-# YANGILIK QO'SHISH
+# YANGILIK QO‘SHISH
 # =========================================================
 
 @dp.message(F.text == "📰 Yangilik qo‘shish")
 async def add_news_start(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -1810,17 +1656,24 @@ async def add_news_start(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_broadcast_waiting.discard(user_id)
 
     admin_news_waiting.add(user_id)
 
     await message.answer(
-        "📰 <b>YANGILIK QO‘SHISH</b>\n\n"
-        "📝 Matn yoki 🖼 rasm yuboring.\n\n"
-        "Rasmga caption yozsangiz, caption ham saqlanadi.",
-        parse_mode="HTML"
+        "📰 YANGILIK QO‘SHISH\n\n"
+        "Matn yoki rasm yuboring.\n\n"
+        "📝 Matn yuborsangiz — matnli yangilik.\n"
+        "🖼 Rasm yuborsangiz — rasmli yangilik.\n\n"
+        "Rasmga caption yozsangiz, "
+        "caption ham saqlanadi."
     )
 
+
+# =========================================================
+# YANGILIK SAQLASH
+# =========================================================
 
 async def save_news(message: Message):
 
@@ -1838,32 +1691,23 @@ async def save_news(message: Message):
         photo_id = message.photo[-1].file_id
         text = message.caption or ""
 
-        try:
+        conn = db_connect()
+        cursor = conn.cursor()
 
-            with closing(db_connect()) as conn:
-
-                conn.execute(
-                    """
-                    INSERT INTO news
-                    (text, photo_id)
-                    VALUES (?, ?)
-                    """,
-                    (text, photo_id)
-                )
-
-                conn.commit()
-
-        except Exception as e:
-
-            logging.error(
-                f"Rasmli yangilik xatosi: {e}"
+        cursor.execute(
+            """
+            INSERT INTO news
+            (text, photo_id)
+            VALUES (?, ?)
+            """,
+            (
+                text,
+                photo_id
             )
+        )
 
-            await message.answer(
-                "❌ Rasmni saqlashda xatolik."
-            )
-
-            return True
+        conn.commit()
+        conn.close()
 
         admin_news_waiting.discard(user_id)
 
@@ -1877,32 +1721,22 @@ async def save_news(message: Message):
     # MATN
     if message.text and message.text.strip():
 
-        try:
+        text = message.text.strip()
 
-            with closing(db_connect()) as conn:
+        conn = db_connect()
+        cursor = conn.cursor()
 
-                conn.execute(
-                    """
-                    INSERT INTO news
-                    (text, photo_id)
-                    VALUES (?, NULL)
-                    """,
-                    (message.text.strip(),)
-                )
+        cursor.execute(
+            """
+            INSERT INTO news
+            (text, photo_id)
+            VALUES (?, NULL)
+            """,
+            (text,)
+        )
 
-                conn.commit()
-
-        except Exception as e:
-
-            logging.error(
-                f"Matnli yangilik xatosi: {e}"
-            )
-
-            await message.answer(
-                "❌ Yangilikni saqlashda xatolik."
-            )
-
-            return True
+        conn.commit()
+        conn.close()
 
         admin_news_waiting.discard(user_id)
 
@@ -1914,7 +1748,8 @@ async def save_news(message: Message):
         return True
 
     await message.answer(
-        "❌ Matn yoki rasm yuboring."
+        "❌ Yangilik sifatida matn yoki "
+        "rasm yuboring."
     )
 
     return True
@@ -1927,36 +1762,25 @@ async def save_news(message: Message):
 @dp.message(F.text == "📋 Loyihalar")
 async def admin_projects(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    try:
+    conn = db_connect()
+    cursor = conn.cursor()
 
-        with closing(db_connect()) as conn:
+    cursor.execute(
+        """
+        SELECT id, name, link, phone
+        FROM projects
+        ORDER BY id DESC
+        """
+    )
 
-            cursor = conn.cursor()
+    projects = cursor.fetchall()
 
-            cursor.execute(
-                """
-                SELECT id, name, link, phone
-                FROM projects
-                ORDER BY id DESC
-                """
-            )
-
-            projects = cursor.fetchall()
-
-    except Exception as e:
-
-        logging.error(
-            f"Admin projects xatosi: {e}"
-        )
-
-        await message.answer(
-            "❌ Loyihalarni olishda xatolik."
-        )
-
-        return
+    conn.close()
 
     if not projects:
 
@@ -1977,11 +1801,7 @@ async def admin_projects(message: Message):
             f"📱 {phone or 'Ko‘rsatilmagan'}\n\n"
         )
 
-    for i in range(0, len(text), 3900):
-
-        await message.answer(
-            text[i:i + 3900]
-        )
+    await message.answer(text)
 
 
 # =========================================================
@@ -1991,7 +1811,9 @@ async def admin_projects(message: Message):
 @dp.message(F.text == "❌ Admin panelni yopish")
 async def close_admin(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     user_id = message.from_user.id
@@ -1999,6 +1821,7 @@ async def close_admin(message: Message):
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_project_link.pop(user_id, None)
+
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
 
@@ -2007,7 +1830,7 @@ async def close_admin(message: Message):
     if lang == "ru":
 
         await message.answer(
-            "✅ Админ-панель закрыта.",
+            "✅ Admin panel yopildi.",
             reply_markup=ru_keyboard()
         )
 
@@ -2040,87 +1863,24 @@ async def other_messages(message: Message):
 # BOTNI ISHGA TUSHIRISH
 # =========================================================
 
-async def run_bot():
+async def main():
 
-    bot = Bot(
-        token=BOT_TOKEN
-    )
+    init_db()
+
+    print("=================================")
+    print("BOT ISHGA TUSHDI")
+    print("=================================")
 
     try:
 
-        await bot.delete_webhook(
-            drop_pending_updates=False
-        )
-
-        logging.info(
-            "Telegram polling boshlandi."
-        )
-
         await dp.start_polling(
             bot,
-            polling_timeout=30,
-            handle_signals=False
+            allowed_updates=dp.resolve_used_update_types()
         )
 
     finally:
 
         await bot.session.close()
-
-
-async def main():
-
-    if not BOT_TOKEN:
-
-        raise RuntimeError(
-            "BOT_TOKEN topilmadi. "
-            "Railway Variables ichiga BOT_TOKEN qo‘ying."
-        )
-
-    init_db()
-
-    retry_delay = 3
-
-    while True:
-
-        try:
-
-            await run_bot()
-
-            logging.warning(
-                "Polling to‘xtadi. Qayta ulanmoqda..."
-            )
-
-            await asyncio.sleep(5)
-
-            retry_delay = 3
-
-        except asyncio.CancelledError:
-
-            logging.info(
-                "Bot to‘xtatildi."
-            )
-
-            raise
-
-        except Exception as e:
-
-            logging.exception(
-                f"Bot xatosi: {e}"
-            )
-
-            logging.info(
-                f"{retry_delay} sekunddan keyin "
-                f"qayta ulanadi."
-            )
-
-            await asyncio.sleep(
-                retry_delay
-            )
-
-            retry_delay = min(
-                retry_delay * 2,
-                60
-            )
 
 
 # =========================================================
@@ -2130,11 +1890,8 @@ async def main():
 if __name__ == "__main__":
 
     try:
-
         asyncio.run(main())
 
     except KeyboardInterrupt:
 
-        logging.info(
-            "Bot qo‘lda to‘xtatildi."
-        )
+        print("BOT TO‘XTATILDI")
