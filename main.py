@@ -19,8 +19,8 @@ BOT_TOKEN = "8615736731:AAEYW7RCc-YeGPI3mrod2dkyxeYR7QbRqOA"
 
 # Admin Telegram ID larini shu yerga yozing
 ADMIN_IDS = [
-    123456789,
-    # 987654321,
+    7998053914,
+    # 1599812727,
 ]
 
 DB_NAME = "bot.db"
