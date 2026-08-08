@@ -30,7 +30,10 @@ ADMIN_IDS = [
 
 DB_NAME = "bot.db"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -208,9 +211,15 @@ def admin_keyboard():
 admin_project_waiting = set()
 admin_project_name = {}
 admin_news_waiting = set()
-
-# Ommaviy xabar yuborayotgan adminlar
 admin_broadcast_waiting = set()
+
+
+# =========================================================
+# ADMIN TEKSHIRISH
+# =========================================================
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
 
 
 # =========================================================
@@ -270,6 +279,12 @@ async def language_ru(callback: CallbackQuery):
 @dp.message(F.text == "📌 Loyihalar")
 async def projects_uz(message: Message):
 
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+
     conn = db_connect()
     cursor = conn.cursor()
 
@@ -311,6 +326,12 @@ async def projects_uz(message: Message):
 
 @dp.message(F.text == "📌 Проекты")
 async def projects_ru(message: Message):
+
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
 
     conn = db_connect()
     cursor = conn.cursor()
@@ -354,6 +375,12 @@ async def projects_ru(message: Message):
 @dp.message(F.text == "📰 Yangiliklar")
 async def news_uz(message: Message):
 
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+
     conn = db_connect()
     cursor = conn.cursor()
 
@@ -385,6 +412,12 @@ async def news_uz(message: Message):
 
 @dp.message(F.text == "📰 Новости")
 async def news_ru(message: Message):
+
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
 
     conn = db_connect()
     cursor = conn.cursor()
@@ -418,6 +451,12 @@ async def news_ru(message: Message):
 @dp.message(F.text == "❓ Yordam")
 async def help_uz(message: Message):
 
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+
     await message.answer(
         "❓ Yordam\n\n"
         "📌 Loyihalar — mavjud loyihalarni ko‘rish\n"
@@ -433,20 +472,18 @@ async def help_uz(message: Message):
 @dp.message(F.text == "❓ Помощь")
 async def help_ru(message: Message):
 
+    add_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+
     await message.answer(
         "❓ Помощь\n\n"
         "📌 Проекты — просмотр проектов\n"
         "📰 Новости — просмотр новостей\n\n"
         "При возникновении проблем обратитесь к администратору."
     )
-
-
-# =========================================================
-# ADMIN TEKSHIRISH
-# =========================================================
-
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
 
 
 # =========================================================
@@ -525,12 +562,10 @@ async def broadcast_start(message: Message):
 
     user_id = message.from_user.id
 
-    # Boshqa rejimlarni o‘chiramiz
     admin_project_waiting.discard(user_id)
     admin_project_name.pop(user_id, None)
     admin_news_waiting.discard(user_id)
 
-    # Ommaviy xabar rejimini yoqamiz
     admin_broadcast_waiting.add(user_id)
 
     await message.answer(
@@ -564,12 +599,12 @@ async def send_broadcast(message: Message):
     cursor = conn.cursor()
 
     cursor.execute("SELECT user_id FROM users")
-
     users = cursor.fetchall()
 
     conn.close()
 
     if not users:
+
         admin_broadcast_waiting.discard(user_id)
 
         await message.answer(
@@ -587,26 +622,87 @@ async def send_broadcast(message: Message):
     blocked = 0
     failed = 0
 
-    for row in users:
+    # =====================================================
+    # RASM YUBORISH
+    # =====================================================
 
-        target_user_id = row[0]
+    if message.photo:
 
-        try:
+        photo_id = message.photo[-1].file_id
+        caption = message.caption
 
-            await bot.copy_message(
-                chat_id=target_user_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id
-            )
+        for row in users:
 
-            success += 1
+            target_user_id = row[0]
 
-            # Telegram serveriga juda tez so‘rov yubormaslik
-            await asyncio.sleep(0.05)
+            try:
 
-        except TelegramRetryAfter as e:
+                await bot.send_photo(
+                    chat_id=target_user_id,
+                    photo=photo_id,
+                    caption=caption
+                )
 
-            await asyncio.sleep(e.retry_after)
+                success += 1
+
+                await asyncio.sleep(0.05)
+
+            except TelegramRetryAfter as e:
+
+                await asyncio.sleep(e.retry_after)
+
+                try:
+
+                    await bot.send_photo(
+                        chat_id=target_user_id,
+                        photo=photo_id,
+                        caption=caption
+                    )
+
+                    success += 1
+
+                except Exception as e2:
+
+                    logging.error(
+                        f"Rasm qayta yuborishda xato "
+                        f"{target_user_id}: {e2}"
+                    )
+
+                    failed += 1
+
+            except TelegramForbiddenError:
+
+                blocked += 1
+
+                delete_user(target_user_id)
+
+            except TelegramBadRequest as e:
+
+                logging.error(
+                    f"TelegramBadRequest "
+                    f"{target_user_id}: {e}"
+                )
+
+                failed += 1
+
+            except Exception as e:
+
+                logging.error(
+                    f"Rasm yuborishda xato "
+                    f"{target_user_id}: {e}"
+                )
+
+                failed += 1
+
+    # =====================================================
+    # RASM BO‘LMASA — BOSHQA XABARLAR
+    # =====================================================
+
+    else:
+
+        for row in users:
+
+            target_user_id = row[0]
 
             try:
 
@@ -618,38 +714,59 @@ async def send_broadcast(message: Message):
 
                 success += 1
 
-            except Exception:
+                await asyncio.sleep(0.05)
+
+            except TelegramRetryAfter as e:
+
+                await asyncio.sleep(e.retry_after)
+
+                try:
+
+                    await bot.copy_message(
+                        chat_id=target_user_id,
+                        from_chat_id=message.chat.id,
+                        message_id=message.message_id
+                    )
+
+                    success += 1
+
+                except Exception as e2:
+
+                    logging.error(
+                        f"Xabar qayta yuborishda xato "
+                        f"{target_user_id}: {e2}"
+                    )
+
+                    failed += 1
+
+            except TelegramForbiddenError:
+
+                blocked += 1
+
+                delete_user(target_user_id)
+
+            except TelegramBadRequest as e:
+
+                logging.error(
+                    f"TelegramBadRequest "
+                    f"{target_user_id}: {e}"
+                )
+
                 failed += 1
 
-        except TelegramForbiddenError:
+            except Exception as e:
 
-            # Foydalanuvchi botni bloklagan
-            blocked += 1
+                logging.error(
+                    f"Xabar yuborishda xato "
+                    f"{target_user_id}: {e}"
+                )
 
-            conn = db_connect()
-            cursor = conn.cursor()
+                failed += 1
 
-            cursor.execute(
-                "DELETE FROM users WHERE user_id = ?",
-                (target_user_id,)
-            )
+    # =====================================================
+    # YAKUN
+    # =====================================================
 
-            conn.commit()
-            conn.close()
-
-        except TelegramBadRequest:
-
-            failed += 1
-
-        except Exception as e:
-
-            logging.error(
-                f"Broadcast xatosi {target_user_id}: {e}"
-            )
-
-            failed += 1
-
-    # Rejimni tugatamiz
     admin_broadcast_waiting.discard(user_id)
 
     await message.answer(
@@ -662,6 +779,32 @@ async def send_broadcast(message: Message):
     )
 
     return True
+
+
+# =========================================================
+# FOYDALANUVCHINI BAZADAN O‘CHIRISH
+# =========================================================
+
+def delete_user(user_id):
+
+    try:
+
+        conn = db_connect()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "DELETE FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+
+        logging.error(
+            f"Foydalanuvchini o‘chirishda xato: {e}"
+        )
 
 
 # =========================================================
@@ -691,7 +834,7 @@ async def add_project_start(message: Message):
 
 
 # =========================================================
-# LOYIHA SAQLASH — 2 BOSQICH
+# LOYIHA SAQLASH — 2-BOSQICH
 # =========================================================
 
 async def save_project(message: Message):
@@ -715,7 +858,7 @@ async def save_project(message: Message):
     text = message.text.strip()
 
     # =====================================================
-    # 1-BOSQICH — LOYIHA NOMI
+    # LOYIHA NOMI
     # =====================================================
 
     if user_id not in admin_project_name:
@@ -733,7 +876,7 @@ async def save_project(message: Message):
         return True
 
     # =====================================================
-    # 2-BOSQICH — HAVOLA
+    # HAVOLA
     # =====================================================
 
     name = admin_project_name[user_id]
@@ -931,15 +1074,15 @@ async def close_admin(message: Message):
 @dp.message()
 async def other_messages(message: Message):
 
-    # Avval ommaviy xabar rejimini tekshiramiz
+    # Ommaviy xabar
     if await send_broadcast(message):
         return
 
-    # Keyin loyiha rejimini tekshiramiz
+    # Loyiha qo‘shish
     if await save_project(message):
         return
 
-    # Keyin yangilik rejimini tekshiramiz
+    # Yangilik qo‘shish
     if await save_news(message):
         return
 
