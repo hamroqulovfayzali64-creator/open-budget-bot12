@@ -1,5 +1,7 @@
 print("MAIN.PY ISHLAYAPTI", 
 flush=True)
+print("IMPORTLAR TUGADI", 
+flush=True)
 
 import asyncio
 import logging
