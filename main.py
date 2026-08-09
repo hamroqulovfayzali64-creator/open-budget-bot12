@@ -4,6 +4,8 @@ import os
 import sqlite3
 from pathlib import Path
 from contextlib import closing
+from html import escape
+from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -34,7 +36,7 @@ ADMIN_IDS = set()
 admin_ids_text = os.getenv("ADMIN_IDS", "").strip()
 
 if admin_ids_text:
-    for item in admin_ids_text.split(","):
+    for item in admin_ids_text.replace(";", ",").split(","):
         item = item.strip()
         if item.isdigit():
             ADMIN_IDS.add(int(item))
@@ -51,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 if not BOT_TOKEN:
     raise RuntimeError(
-        "BOT_TOKEN topilmadi. Railway Variables ichida BOT_TOKEN qo‘shing."
+        "BOT_TOKEN topilmadi. Railway Variables ichida BOT_TOKEN qo'shing."
     )
 
 bot = Bot(token=BOT_TOKEN)
@@ -67,22 +69,21 @@ TEXTS = {
         "welcome": (
             "Assalomu alaykum, {name}! 👋\n\n"
             "Botimizga xush kelibsiz.\n"
-            "Kerakli bo‘limni tanlang:"
+            "Kerakli bo'limni tanlang:"
         ),
-
         "projects": "📌 Loyihalar",
         "news": "📰 Yangiliklar",
         "help": "❓ Yordam",
         "language": "🌐 Til",
 
         "statistics": "📊 Statistika",
-        "add_project": "➕ Loyiha qo‘shish",
-        "add_news": "📰 Yangilik qo‘shish",
+        "add_project": "➕ Loyiha qo'shish",
+        "add_news": "📰 Yangilik qo'shish",
         "broadcast": "📢 Reklama tarqatish",
         "back": "🔙 Orqaga",
 
         "select_language": "🌐 Tilni tanlang:",
-        "language_saved": "✅ Til muvaffaqiyatli o‘zgartirildi.",
+        "language_saved": "✅ Til muvaffaqiyatli o'zgartirildi.",
 
         "select_project": "📌 Loyihalardan birini tanlang:",
         "no_projects": "📌 Hozircha loyihalar mavjud emas.",
@@ -94,9 +95,10 @@ TEXTS = {
             "https://example.com"
         ),
 
-        "project_created": "✅ Loyiha muvaffaqiyatli qo‘shildi!",
+        "project_created": "✅ Loyiha muvaffaqiyatli qo'shildi!",
+
         "invalid_link": (
-            "❌ Havola noto‘g‘ri.\n\n"
+            "❌ Havola noto'g'ri.\n\n"
             "Havola http:// yoki https:// bilan boshlanishi kerak."
         ),
 
@@ -119,26 +121,26 @@ TEXTS = {
         "already_voted": "⚠️ Siz bu loyihaga allaqachon ovoz bergansiz.",
 
         "own_phone_only": (
-            "❌ Iltimos, o‘zingizning telefon raqamingizni yuboring."
+            "❌ Iltimos, o'zingizning telefon raqamingizni yuboring."
         ),
 
         "help_text": (
             "❓ Yordam\n\n"
-            "📌 Loyihalar — mavjud loyihalarni ko‘rish.\n"
+            "📌 Loyihalar — mavjud loyihalarni ko'rish.\n"
             "🗳 Ovoz berish — loyiha uchun ovoz berish.\n"
-            "📰 Yangiliklar — so‘nggi yangiliklarni ko‘rish.\n"
+            "📰 Yangiliklar — so'nggi yangiliklarni ko'rish.\n"
             "🌐 Til — tilni almashtirish.\n\n"
             "Telefon raqami faqat sizning roziligingiz bilan olinadi."
         ),
 
         "news_empty": "📰 Hozircha yangiliklar mavjud emas.",
 
-        "admin_only": "❌ Bu bo‘lim faqat administratorlar uchun.",
+        "admin_only": "❌ Bu bo'lim faqat administratorlar uchun.",
         "admin_panel": "⚙️ Admin panel",
 
         "send_news": (
             "📰 Yangilik uchun rasm, video yoki matn yuboring.\n\n"
-            "Rasm yuborsangiz caption ham qo‘shishingiz mumkin."
+            "Rasm yuborsangiz caption ham qo'shishingiz mumkin."
         ),
 
         "news_saved": (
@@ -147,25 +149,31 @@ TEXTS = {
 
         "send_broadcast": (
             "📢 Barcha foydalanuvchilarga yuboriladigan xabarni yuboring.\n\n"
-            "Matn, rasm, video yoki boshqa Telegram xabarini yuborishingiz mumkin."
+            "Matn, rasm, video, hujjat yoki boshqa Telegram xabarini yuborishingiz mumkin."
         ),
 
         "broadcast_finished": "✅ Tarqatish yakunlandi.",
-
         "cancelled": "❌ Bekor qilindi.",
 
         "stats": (
             "📊 Statistika\n\n"
             "👥 Foydalanuvchilar: {users}\n"
             "🗳 Jami ovozlar: {votes}\n"
-            "👁 Loyiha ko‘rishlari: {views}\n"
+            "👁 Loyiha ko'rishlari: {views}\n"
             "📌 Loyihalar soni: {projects}\n"
             "📰 Yangiliklar soni: {news}"
         ),
 
         "unknown": "❗ Iltimos, menyudagi tugmalardan foydalaning.",
 
-        "project_added": "✅ Loyiha qo‘shildi.",
+        "project_invalid_name": "❌ Loyiha nomi juda qisqa.",
+
+        "broadcast_result": (
+            "📢 Tarqatish tugadi.\n\n"
+            "✅ Yuborildi: {success}\n"
+            "🚫 Botni bloklagan: {blocked}\n"
+            "⚠️ Xatolik: {failed}"
+        ),
     },
 
     "ru": {
@@ -174,7 +182,6 @@ TEXTS = {
             "Добро пожаловать в нашего бота.\n"
             "Выберите нужный раздел:"
         ),
-
         "projects": "📌 Проекты",
         "news": "📰 Новости",
         "help": "❓ Помощь",
@@ -200,6 +207,7 @@ TEXTS = {
         ),
 
         "project_created": "✅ Проект успешно добавлен!",
+
         "invalid_link": (
             "❌ Неверная ссылка.\n\n"
             "Ссылка должна начинаться с http:// или https://."
@@ -252,11 +260,10 @@ TEXTS = {
 
         "send_broadcast": (
             "📢 Отправьте сообщение для всех пользователей.\n\n"
-            "Можно отправить текст, фото, видео или другое сообщение Telegram."
+            "Можно отправить текст, фото, видео, документ или другое сообщение Telegram."
         ),
 
         "broadcast_finished": "✅ Рассылка завершена.",
-
         "cancelled": "❌ Отменено.",
 
         "stats": (
@@ -270,8 +277,17 @@ TEXTS = {
 
         "unknown": "❗ Пожалуйста, используйте кнопки меню.",
 
-        "project_added": "✅ Проект добавлен.",
-    }
+        "project_invalid_name": (
+            "❌ Название проекта слишком короткое."
+        ),
+
+        "broadcast_result": (
+            "📢 Рассылка завершена.\n\n"
+            "✅ Отправлено: {success}\n"
+            "🚫 Заблокировали бота: {blocked}\n"
+            "⚠️ Ошибок: {failed}"
+        ),
+    },
 }
 
 
@@ -301,32 +317,44 @@ class VoteStates(StatesGroup):
 # =========================================================
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def column_exists(db, table_name, column_name):
-    cur = db.cursor()
+def get_columns(db, table_name):
+    cursor = db.cursor()
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row["name"] for row in cursor.fetchall()}
 
-    cur.execute(
-        f"PRAGMA table_info({table_name})"
-    )
 
-    columns = cur.fetchall()
+def add_column_if_missing(
+    db,
+    table_name,
+    column_name,
+    definition
+):
+    columns = get_columns(db, table_name)
 
-    return any(
-        row[1] == column_name
-        for row in columns
-    )
+    if column_name not in columns:
+        db.execute(
+            f"ALTER TABLE {table_name} "
+            f"ADD COLUMN {column_name} {definition}"
+        )
+
+        logger.info(
+            "Database migration: %s.%s qo'shildi.",
+            table_name,
+            column_name
+        )
 
 
 def init_db():
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
         # USERS
-        cur.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -337,20 +365,136 @@ def init_db():
             )
         """)
 
+        add_column_if_missing(
+            db,
+            "users",
+            "username",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            db,
+            "users",
+            "first_name",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            db,
+            "users",
+            "language",
+            "TEXT DEFAULT 'uz'"
+        )
+
+        add_column_if_missing(
+            db,
+            "users",
+            "phone",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            db,
+            "users",
+            "created_at",
+            "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        )
+
         # PROJECTS
-        cur.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name_uz TEXT NOT NULL,
-                name_ru TEXT NOT NULL,
-                url TEXT,
+                name_uz TEXT DEFAULT '',
+                name_ru TEXT DEFAULT '',
+                url TEXT DEFAULT '',
                 click_count INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
+        add_column_if_missing(
+            db,
+            "projects",
+            "name_uz",
+            "TEXT DEFAULT ''"
+        )
+
+        add_column_if_missing(
+            db,
+            "projects",
+            "name_ru",
+            "TEXT DEFAULT ''"
+        )
+
+        add_column_if_missing(
+            db,
+            "projects",
+            "url",
+            "TEXT DEFAULT ''"
+        )
+
+        add_column_if_missing(
+            db,
+            "projects",
+            "click_count",
+            "INTEGER DEFAULT 0"
+        )
+
+        add_column_if_missing(
+            db,
+            "projects",
+            "created_at",
+            "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        )
+
+        # Eski database'dagi ustunlarni yangi ustunlarga o'tkazish
+        project_columns = get_columns(db, "projects")
+
+        if "nomi" in project_columns:
+            db.execute("""
+                UPDATE projects
+                SET name_uz = nomi
+                WHERE
+                    (name_uz IS NULL OR name_uz = '')
+                    AND nomi IS NOT NULL
+            """)
+
+            db.execute("""
+                UPDATE projects
+                SET name_ru = nomi
+                WHERE
+                    (name_ru IS NULL OR name_ru = '')
+                    AND nomi IS NOT NULL
+            """)
+
+        if "havola" in project_columns:
+            db.execute("""
+                UPDATE projects
+                SET url = havola
+                WHERE
+                    (url IS NULL OR url = '')
+                    AND havola IS NOT NULL
+            """)
+
+        if "name" in project_columns:
+            db.execute("""
+                UPDATE projects
+                SET name_uz = name
+                WHERE
+                    (name_uz IS NULL OR name_uz = '')
+                    AND name IS NOT NULL
+            """)
+
+            db.execute("""
+                UPDATE projects
+                SET name_ru = name
+                WHERE
+                    (name_ru IS NULL OR name_ru = '')
+                    AND name IS NOT NULL
+            """)
+
         # VOTES
-        cur.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -361,8 +505,22 @@ def init_db():
             )
         """)
 
+        add_column_if_missing(
+            db,
+            "votes",
+            "phone",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            db,
+            "votes",
+            "created_at",
+            "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        )
+
         # NEWS
-        cur.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS news (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id INTEGER,
@@ -372,24 +530,51 @@ def init_db():
             )
         """)
 
-        # Eski DBda click_count bo'lmasa qo'shamiz
-        if not column_exists(
+        add_column_if_missing(
             db,
-            "projects",
-            "click_count"
-        ):
-            cur.execute("""
-                ALTER TABLE projects
-                ADD COLUMN click_count INTEGER DEFAULT 0
-            """)
+            "news",
+            "message_id",
+            "INTEGER"
+        )
+
+        add_column_if_missing(
+            db,
+            "news",
+            "chat_id",
+            "INTEGER"
+        )
+
+        add_column_if_missing(
+            db,
+            "news",
+            "text",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            db,
+            "news",
+            "created_at",
+            "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        )
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_votes_user_project
+            ON votes(user_id, project_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_news_created
+            ON news(id DESC)
+        """)
 
         db.commit()
 
-    logger.info("Database tayyor.")
+    logger.info("Database tayyor: %s", DB_PATH)
 
 
 # =========================================================
-# USER
+# USER FUNKSIYALARI
 # =========================================================
 
 def add_or_update_user(message: Message):
@@ -399,17 +584,17 @@ def add_or_update_user(message: Message):
     user = message.from_user
 
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute(
+        cursor.execute(
             "SELECT user_id FROM users WHERE user_id = ?",
             (user.id,)
         )
 
-        exists = cur.fetchone()
+        exists = cursor.fetchone()
 
         if exists:
-            cur.execute("""
+            cursor.execute("""
                 UPDATE users
                 SET username = ?,
                     first_name = ?
@@ -421,7 +606,7 @@ def add_or_update_user(message: Message):
             ))
 
         else:
-            cur.execute("""
+            cursor.execute("""
                 INSERT INTO users (
                     user_id,
                     username,
@@ -440,15 +625,15 @@ def add_or_update_user(message: Message):
 
 def get_language(user_id: int):
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute("""
+        cursor.execute("""
             SELECT language
             FROM users
             WHERE user_id = ?
         """, (user_id,))
 
-        row = cur.fetchone()
+        row = cursor.fetchone()
 
         if row and row["language"] in ("uz", "ru"):
             return row["language"]
@@ -491,6 +676,16 @@ def is_admin(user_id: int):
     return user_id in ADMIN_IDS
 
 
+def remove_user(user_id: int):
+    with closing(get_db()) as db:
+        db.execute(
+            "DELETE FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+
+        db.commit()
+
+
 # =========================================================
 # KEYBOARDS
 # =========================================================
@@ -519,17 +714,17 @@ def admin_keyboard(language="uz"):
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text=t["statistics"]),
+                KeyboardButton(text=t["statistics"])
             ],
             [
                 KeyboardButton(text=t["add_project"]),
                 KeyboardButton(text=t["add_news"]),
             ],
             [
-                KeyboardButton(text=t["broadcast"]),
+                KeyboardButton(text=t["broadcast"])
             ],
             [
-                KeyboardButton(text=t["back"]),
+                KeyboardButton(text=t["back"])
             ],
         ],
         resize_keyboard=True
@@ -544,8 +739,8 @@ def language_keyboard():
                 KeyboardButton(text="🇷🇺 Русский"),
             ],
             [
-                KeyboardButton(text="🔙 Orqaga"),
-            ]
+                KeyboardButton(text="🔙 Orqaga")
+            ],
         ],
         resize_keyboard=True
     )
@@ -564,7 +759,7 @@ def phone_keyboard(language="uz"):
             ],
             [
                 KeyboardButton(text=t["cancel"])
-            ]
+            ],
         ],
         resize_keyboard=True,
         one_time_keyboard=True
@@ -666,15 +861,22 @@ async def projects_handler(message: Message):
     t = TEXTS[language]
 
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute("""
-            SELECT id, name_uz, name_ru, url
+        cursor.execute("""
+            SELECT
+                id,
+                name_uz,
+                name_ru,
+                url
             FROM projects
+            WHERE
+                COALESCE(name_uz, '') != ''
+                OR COALESCE(name_ru, '') != ''
             ORDER BY id DESC
         """)
 
-        projects = cur.fetchall()
+        projects = cursor.fetchall()
 
     if not projects:
         await message.answer(
@@ -691,6 +893,13 @@ async def projects_handler(message: Message):
             if language == "uz"
             else project["name_ru"]
         )
+
+        if not name:
+            name = (
+                project["name_uz"]
+                or project["name_ru"]
+                or "Loyiha"
+            )
 
         buttons.append([
             InlineKeyboardButton(
@@ -721,6 +930,7 @@ async def project_detail(
         project_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
         await callback.answer(
             "Xatolik",
@@ -735,23 +945,27 @@ async def project_detail(
     t = TEXTS[language]
 
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute("""
-            SELECT *
+        cursor.execute("""
+            SELECT
+                id,
+                name_uz,
+                name_ru,
+                url
             FROM projects
             WHERE id = ?
         """, (
             project_id,
         ))
 
-        project = cur.fetchone()
+        project = cursor.fetchone()
 
         if project:
-            # Loyiha ochilganini hisoblaymiz
-            cur.execute("""
+            cursor.execute("""
                 UPDATE projects
-                SET click_count = COALESCE(click_count, 0) + 1
+                SET click_count =
+                    COALESCE(click_count, 0) + 1
                 WHERE id = ?
             """, (
                 project_id,
@@ -772,6 +986,13 @@ async def project_detail(
         else project["name_ru"]
     )
 
+    if not name:
+        name = (
+            project["name_uz"]
+            or project["name_ru"]
+            or "Loyiha"
+        )
+
     buttons = []
 
     if project["url"]:
@@ -790,7 +1011,7 @@ async def project_detail(
     ])
 
     await callback.message.answer(
-        f"📌 <b>{name}</b>\n\n"
+        f"📌 <b>{escape(name)}</b>\n\n"
         f"🗳 {t['vote']}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
@@ -816,6 +1037,7 @@ async def vote_handler(
         project_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
         await callback.answer(
             "Xatolik",
@@ -829,11 +1051,10 @@ async def vote_handler(
 
     t = TEXTS[language]
 
-    # Loyiha mavjudligini tekshirish
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute("""
+        cursor.execute("""
             SELECT id
             FROM projects
             WHERE id = ?
@@ -841,7 +1062,7 @@ async def vote_handler(
             project_id,
         ))
 
-        project = cur.fetchone()
+        project = cursor.fetchone()
 
         if not project:
             await callback.answer(
@@ -850,8 +1071,7 @@ async def vote_handler(
             )
             return
 
-        # Avval ovoz berganmi?
-        cur.execute("""
+        cursor.execute("""
             SELECT id
             FROM votes
             WHERE user_id = ?
@@ -861,7 +1081,7 @@ async def vote_handler(
             project_id
         ))
 
-        already = cur.fetchone()
+        already = cursor.fetchone()
 
     if already:
         await callback.answer(
@@ -892,7 +1112,10 @@ async def vote_handler(
 # PHONE
 # =========================================================
 
-@dp.message(VoteStates.waiting_phone, F.contact)
+@dp.message(
+    VoteStates.waiting_phone,
+    F.contact
+)
 async def contact_handler(
     message: Message,
     state: FSMContext
@@ -915,7 +1138,6 @@ async def contact_handler(
 
     contact = message.contact
 
-    # Foydalanuvchi o'z raqamini yuborganini tekshiramiz
     if (
         contact.user_id
         and contact.user_id != message.from_user.id
@@ -925,15 +1147,12 @@ async def contact_handler(
         )
         return
 
-    # Telegram client ayrim holatda user_id bermasligi mumkin.
-    # request_contact tugmasi orqali yuborilgan contact qabul qilinadi.
     phone = contact.phone_number
 
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        # Loyiha mavjudmi?
-        cur.execute("""
+        cursor.execute("""
             SELECT id
             FROM projects
             WHERE id = ?
@@ -941,7 +1160,7 @@ async def contact_handler(
             project_id,
         ))
 
-        project = cur.fetchone()
+        project = cursor.fetchone()
 
         if not project:
             await state.clear()
@@ -952,8 +1171,7 @@ async def contact_handler(
             )
             return
 
-        # Ikkinchi marta ovoz berishni bloklash
-        cur.execute("""
+        cursor.execute("""
             SELECT id
             FROM votes
             WHERE user_id = ?
@@ -963,7 +1181,7 @@ async def contact_handler(
             project_id
         ))
 
-        already = cur.fetchone()
+        already = cursor.fetchone()
 
         if already:
             await state.clear()
@@ -975,7 +1193,7 @@ async def contact_handler(
             return
 
         try:
-            cur.execute("""
+            cursor.execute("""
                 INSERT INTO votes (
                     user_id,
                     project_id,
@@ -1016,10 +1234,6 @@ async def contact_handler(
     )
 
 
-# =========================================================
-# PHONE STATE'DA BOSHQA XABAR
-# =========================================================
-
 @dp.message(VoteStates.waiting_phone)
 async def phone_required_handler(
     message: Message
@@ -1052,9 +1266,14 @@ async def cancel_handler(
         message.from_user.id
     )
 
+    if is_admin(message.from_user.id):
+        markup = admin_keyboard(language)
+    else:
+        markup = user_keyboard(language)
+
     await message.answer(
         TEXTS[language]["cancelled"],
-        reply_markup=user_keyboard(language)
+        reply_markup=markup
     )
 
 
@@ -1069,9 +1288,14 @@ async def cancel_command(
         message.from_user.id
     )
 
+    if is_admin(message.from_user.id):
+        markup = admin_keyboard(language)
+    else:
+        markup = user_keyboard(language)
+
     await message.answer(
         TEXTS[language]["cancelled"],
-        reply_markup=user_keyboard(language)
+        reply_markup=markup
     )
 
 
@@ -1112,16 +1336,20 @@ async def news_handler(message: Message):
     )
 
     with closing(get_db()) as db:
-        cur = db.cursor()
+        cursor = db.cursor()
 
-        cur.execute("""
-            SELECT *
+        cursor.execute("""
+            SELECT
+                id,
+                message_id,
+                chat_id,
+                text
             FROM news
             ORDER BY id DESC
             LIMIT 10
         """)
 
-        news_list = cur.fetchall()
+        news_list = cursor.fetchall()
 
     if not news_list:
         await message.answer(
@@ -1130,21 +1358,38 @@ async def news_handler(message: Message):
         )
         return
 
+    sent_any = False
+
     for item in news_list:
         try:
-            await bot.copy_message(
-                chat_id=message.chat.id,
-                from_chat_id=item["chat_id"],
-                message_id=item["message_id"]
-            )
+            if (
+                item["message_id"]
+                and item["chat_id"]
+            ):
+                await bot.copy_message(
+                    chat_id=message.chat.id,
+                    from_chat_id=item["chat_id"],
+                    message_id=item["message_id"]
+                )
 
-            await asyncio.sleep(0.05)
+                sent_any = True
+
+                await asyncio.sleep(0.08)
+
+            elif item["text"]:
+                await message.answer(
+                    item["text"]
+                )
+
+                sent_any = True
 
         except TelegramBadRequest:
             if item["text"]:
                 await message.answer(
                     item["text"]
                 )
+
+                sent_any = True
 
         except Exception as e:
             logger.error(
@@ -1157,16 +1402,28 @@ async def news_handler(message: Message):
                     item["text"]
                 )
 
+                sent_any = True
+
+    if not sent_any:
+        await message.answer(
+            TEXTS[language]["news_empty"],
+            reply_markup=user_keyboard(language)
+        )
+
 
 # =========================================================
 # ADMIN COMMAND
 # =========================================================
 
 @dp.message(Command("admin"))
-async def admin_command(message: Message):
+async def admin_command(
+    message: Message
+):
     add_or_update_user(message)
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         language = get_language(
             message.from_user.id
         )
@@ -1174,6 +1431,7 @@ async def admin_command(message: Message):
         await message.answer(
             TEXTS[language]["admin_only"]
         )
+
         return
 
     language = get_language(
@@ -1186,10 +1444,6 @@ async def admin_command(message: Message):
     )
 
 
-# =========================================================
-# ADMIN PANEL BUTTON
-# =========================================================
-
 @dp.message(F.text.in_({
     "⚙️ Admin panel",
     "⚙️ Админ-панель"
@@ -1197,7 +1451,9 @@ async def admin_command(message: Message):
 async def admin_panel_button(
     message: Message
 ):
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         language = get_language(
             message.from_user.id
         )
@@ -1205,6 +1461,7 @@ async def admin_panel_button(
         await message.answer(
             TEXTS[language]["admin_only"]
         )
+
         return
 
     language = get_language(
@@ -1222,6 +1479,7 @@ async def admin_panel_button(
 # =========================================================
 
 @dp.message(F.text.in_({
+    "➕ Loyiha qo'shish",
     "➕ Loyiha qo‘shish",
     "➕ Добавить проект"
 }))
@@ -1229,12 +1487,17 @@ async def add_project_start(
     message: Message,
     state: FSMContext
 ):
-    if not is_admin(message.from_user.id):
-        await message.answer(
-            TEXTS[
-                get_language(message.from_user.id)
-            ]["admin_only"]
+    if not is_admin(
+        message.from_user.id
+    ):
+        language = get_language(
+            message.from_user.id
         )
+
+        await message.answer(
+            TEXTS[language]["admin_only"]
+        )
+
         return
 
     language = get_language(
@@ -1257,7 +1520,9 @@ async def add_project_name(
     message: Message,
     state: FSMContext
 ):
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -1269,17 +1534,16 @@ async def add_project_name(
         await message.answer(
             TEXTS[language]["project_name"]
         )
+
         return
 
     name = message.text.strip()
 
     if len(name) < 2:
         await message.answer(
-            "❌ Loyiha nomi juda qisqa."
-            if language == "uz"
-            else
-            "❌ Название проекта слишком короткое."
+            TEXTS[language]["project_invalid_name"]
         )
+
         return
 
     await state.update_data(
@@ -1300,7 +1564,9 @@ async def add_project_link(
     message: Message,
     state: FSMContext
 ):
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -1312,17 +1578,24 @@ async def add_project_link(
         await message.answer(
             TEXTS[language]["project_link"]
         )
+
         return
 
     url = message.text.strip()
 
-    if not (
-        url.startswith("https://")
-        or url.startswith("http://")
+    parsed = urlparse(url)
+
+    if (
+        parsed.scheme not in (
+            "http",
+            "https"
+        )
+        or not parsed.netloc
     ):
         await message.answer(
             TEXTS[language]["invalid_link"]
         )
+
         return
 
     data = await state.get_data()
@@ -1338,6 +1611,7 @@ async def add_project_link(
             TEXTS[language]["cancelled"],
             reply_markup=admin_keyboard(language)
         )
+
         return
 
     with closing(get_db()) as db:
@@ -1370,6 +1644,7 @@ async def add_project_link(
 # =========================================================
 
 @dp.message(F.text.in_({
+    "📰 Yangilik qo'shish",
     "📰 Yangilik qo‘shish",
     "📰 Добавить новость"
 }))
@@ -1377,12 +1652,17 @@ async def add_news_start(
     message: Message,
     state: FSMContext
 ):
-    if not is_admin(message.from_user.id):
-        await message.answer(
-            TEXTS[
-                get_language(message.from_user.id)
-            ]["admin_only"]
+    if not is_admin(
+        message.from_user.id
+    ):
+        language = get_language(
+            message.from_user.id
         )
+
+        await message.answer(
+            TEXTS[language]["admin_only"]
+        )
+
         return
 
     language = get_language(
@@ -1405,7 +1685,9 @@ async def add_news_content(
     message: Message,
     state: FSMContext
 ):
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -1413,7 +1695,6 @@ async def add_news_content(
         message.from_user.id
     )
 
-    # Text yoki captionni saqlash
     text = (
         message.text
         or message.caption
@@ -1421,9 +1702,7 @@ async def add_news_content(
     )
 
     with closing(get_db()) as db:
-        cur = db.cursor()
-
-        cur.execute("""
+        db.execute("""
             INSERT INTO news (
                 message_id,
                 chat_id,
@@ -1438,369 +1717,15 @@ async def add_news_content(
 
         db.commit()
 
-    # Foydalanuvchilarga yuborish
-    await broadcast_message(
-        source_chat_id=message.chat.id,
-        source_message_id=message.message_id
+    success, blocked, failed = (
+        await broadcast_message(
+            source_chat_id=message.chat.id,
+            source_message_id=message.message_id
+        )
     )
 
     await state.clear()
 
     await message.answer(
-        TEXTS[language]["news_saved"],
-        reply_markup=admin_keyboard(language)
-    )
-
-
-# =========================================================
-# BROADCAST START
-# =========================================================
-
-@dp.message(F.text.in_({
-    "📢 Reklama tarqatish",
-    "📢 Рассылка"
-}))
-async def broadcast_start(
-    message: Message,
-    state: FSMContext
-):
-    if not is_admin(message.from_user.id):
-        await message.answer(
-            TEXTS[
-                get_language(message.from_user.id)
-            ]["admin_only"]
-        )
-        return
-
-    language = get_language(
-        message.from_user.id
-    )
-
-    await state.clear()
-
-    await state.set_state(
-        BroadcastStates.waiting_content
-    )
-
-    await message.answer(
-        TEXTS[language]["send_broadcast"]
-    )
-
-
-@dp.message(BroadcastStates.waiting_content)
-async def broadcast_content(
-    message: Message,
-    state: FSMContext
-):
-    if not is_admin(message.from_user.id):
-        await state.clear()
-        return
-
-    language = get_language(
-        message.from_user.id
-    )
-
-    await broadcast_message(
-        source_chat_id=message.chat.id,
-        source_message_id=message.message_id
-    )
-
-    await state.clear()
-
-    await message.answer(
-        TEXTS[language]["broadcast_finished"],
-        reply_markup=admin_keyboard(language)
-    )
-
-
-# =========================================================
-# BROADCAST FUNCTION
-# =========================================================
-
-async def broadcast_message(
-    source_chat_id: int,
-    source_message_id: int
-):
-    with closing(get_db()) as db:
-        cur = db.cursor()
-
-        cur.execute("""
-            SELECT user_id
-            FROM users
-            ORDER BY user_id
-        """)
-
-        users = cur.fetchall()
-
-    total = len(users)
-
-    success = 0
-    blocked = 0
-    failed = 0
-
-    logger.info(
-        "Broadcast boshlandi. Jami foydalanuvchi: %s",
-        total
-    )
-
-    for index, user in enumerate(users, start=1):
-        user_id = user["user_id"]
-
-        try:
-            await bot.copy_message(
-                chat_id=user_id,
-                from_chat_id=source_chat_id,
-                message_id=source_message_id
-            )
-
-            success += 1
-
-            await asyncio.sleep(0.05)
-
-        except TelegramRetryAfter as e:
-            logger.warning(
-                "Telegram flood limit. %s soniya kutiladi.",
-                e.retry_after
-            )
-
-            await asyncio.sleep(
-                e.retry_after + 1
-            )
-
-            try:
-                await bot.copy_message(
-                    chat_id=user_id,
-                    from_chat_id=source_chat_id,
-                    message_id=source_message_id
-                )
-
-                success += 1
-
-            except TelegramForbiddenError:
-                blocked += 1
-
-                remove_user(user_id)
-
-            except Exception as retry_error:
-                failed += 1
-
-                logger.error(
-                    "Retry broadcast error %s: %s",
-                    user_id,
-                    retry_error
-                )
-
-        except TelegramForbiddenError:
-            blocked += 1
-
-            remove_user(user_id)
-
-        except TelegramBadRequest as e:
-            failed += 1
-
-            logger.warning(
-                "BadRequest user=%s: %s",
-                user_id,
-                e
-            )
-
-        except Exception as e:
-            failed += 1
-
-            logger.error(
-                "Broadcast error user=%s: %s",
-                user_id,
-                e
-            )
-
-        if index % 100 == 0:
-            logger.info(
-                "Broadcast progress: %s/%s",
-                index,
-                total
-            )
-
-    logger.info(
-        "Broadcast tugadi | success=%s | blocked=%s | failed=%s",
-        success,
-        blocked,
-        failed
-    )
-
-    return success, blocked, failed
-
-
-def remove_user(user_id: int):
-    with closing(get_db()) as db:
-        db.execute(
-            "DELETE FROM users WHERE user_id = ?",
-            (user_id,)
-        )
-
-        db.commit()
-
-
-# =========================================================
-# STATISTICS
-# =========================================================
-
-@dp.message(F.text.in_({
-    "📊 Statistika",
-    "📊 Статистика"
-}))
-async def statistics_handler(
-    message: Message
-):
-    if not is_admin(message.from_user.id):
-        await message.answer(
-            TEXTS[
-                get_language(message.from_user.id)
-            ]["admin_only"]
-        )
-        return
-
-    language = get_language(
-        message.from_user.id
-    )
-
-    with closing(get_db()) as db:
-        cur = db.cursor()
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM users
-        """)
-        users_count = cur.fetchone()[0]
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM votes
-        """)
-        votes_count = cur.fetchone()[0]
-
-        cur.execute("""
-            SELECT COALESCE(
-                SUM(COALESCE(click_count, 0)),
-                0
-            )
-            FROM projects
-        """)
-        views_count = cur.fetchone()[0]
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM projects
-        """)
-        projects_count = cur.fetchone()[0]
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM news
-        """)
-        news_count = cur.fetchone()[0]
-
-    await message.answer(
-        TEXTS[language]["stats"].format(
-            users=users_count,
-            votes=votes_count,
-            views=views_count,
-            projects=projects_count,
-            news=news_count
-        )
-    )
-
-
-# =========================================================
-# ADMIN BACK
-# =========================================================
-
-@dp.message(F.text.in_({
-    "🔙 Orqaga",
-    "🔙 Назад"
-}))
-async def back_handler(
-    message: Message,
-    state: FSMContext
-):
-    await state.clear()
-
-    language = get_language(
-        message.from_user.id
-    )
-
-    if is_admin(message.from_user.id):
-        await message.answer(
-            TEXTS[language]["admin_panel"],
-            reply_markup=admin_keyboard(language)
-        )
-
-    else:
-        await message.answer(
-            TEXTS[language]["welcome"].format(
-                name=message.from_user.first_name
-                or "foydalanuvchi"
-            ),
-            reply_markup=user_keyboard(language)
-        )
-
-
-# =========================================================
-# UNKNOWN
-# =========================================================
-
-@dp.message()
-async def unknown_handler(message: Message):
-    add_or_update_user(message)
-
-    language = get_language(
-        message.from_user.id
-    )
-
-    await message.answer(
-        TEXTS[language]["unknown"],
-        reply_markup=user_keyboard(language)
-    )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-async def main():
-    init_db()
-
-    logger.info("====================================")
-    logger.info("BOT ISHGA TUSHMOQDA")
-    logger.info("Adminlar: %s", ADMIN_IDS)
-    logger.info("Database: %s", DB_PATH)
-    logger.info("====================================")
-
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )
-
-    await dp.start_polling(
-        bot,
-        allowed_updates=dp.resolve_used_update_types()
-    )
-
-
-# =========================================================
-# RUN
-# =========================================================
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-
-    except KeyboardInterrupt:
-        logger.info(
-            "Bot foydalanuvchi tomonidan to‘xtatildi."
-        )
-
-    except Exception as e:
-        logger.exception(
-            "Botda kritik xatolik: %s",
-            e
-        )
-        raise
+        TEXTS[language]["news_saved"]
+        +
