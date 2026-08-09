@@ -1734,4 +1734,273 @@ async def add_news_content(
         reply_markup=admin_keyboard(language)
     )
 
-    
+    # =========================================================
+# BROADCAST
+# =========================================================
+
+async def broadcast_message(
+    source_chat_id: int,
+    source_message_id: int
+):
+    success = 0
+    blocked = 0
+    failed = 0
+
+    with closing(get_db()) as db:
+        cursor = db.cursor()
+
+        cursor.execute("""
+            SELECT user_id
+            FROM users
+        """)
+
+        users = cursor.fetchall()
+
+    for user in users:
+        user_id = user["user_id"]
+
+        try:
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=source_chat_id,
+                message_id=source_message_id
+            )
+
+            success += 1
+
+            await asyncio.sleep(0.05)
+
+        except TelegramForbiddenError:
+            blocked += 1
+            remove_user(user_id)
+
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+
+            try:
+                await bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=source_chat_id,
+                    message_id=source_message_id
+                )
+
+                success += 1
+
+            except Exception as retry_error:
+                logger.error(
+                    "Retry broadcast error %s: %s",
+                    user_id,
+                    retry_error
+                )
+
+                failed += 1
+
+        except TelegramBadRequest as e:
+            logger.error(
+                "Broadcast BadRequest %s: %s",
+                user_id,
+                e
+            )
+
+            failed += 1
+
+        except Exception as e:
+            logger.error(
+                "Broadcast error %s: %s",
+                user_id,
+                e
+            )
+
+            failed += 1
+
+    return success, blocked, failed
+
+
+# =========================================================
+# STATISTIKA
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📊 Statistika",
+    "📊 Статистика"
+}))
+async def statistics_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        language = get_language(message.from_user.id)
+
+        await message.answer(
+            TEXTS[language]["admin_only"]
+        )
+
+        return
+
+    language = get_language(
+        message.from_user.id
+    )
+
+    with closing(get_db()) as db:
+        cursor = db.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM users
+        """)
+        users = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM votes
+        """)
+        votes = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(click_count), 0) AS count
+            FROM projects
+        """)
+        views = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM projects
+        """)
+        projects = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM news
+        """)
+        news = cursor.fetchone()["count"]
+
+    await message.answer(
+        TEXTS[language]["stats"].format(
+            users=users,
+            votes=votes,
+            views=views,
+            projects=projects,
+            news=news
+        ),
+        reply_markup=admin_keyboard(language)
+    )
+
+
+# =========================================================
+# BROADCAST START
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📢 Reklama tarqatish",
+    "📢 Рассылка"
+}))
+async def broadcast_start(
+    message: Message,
+    state: FSMContext
+):
+    if not is_admin(message.from_user.id):
+        language = get_language(
+            message.from_user.id
+        )
+
+        await message.answer(
+            TEXTS[language]["admin_only"]
+        )
+
+        return
+
+    language = get_language(
+        message.from_user.id
+    )
+
+    await state.clear()
+
+    await state.set_state(
+        BroadcastStates.waiting_content
+    )
+
+    await message.answer(
+        TEXTS[language]["send_broadcast"]
+    )
+
+
+# =========================================================
+# BROADCAST CONTENT
+# =========================================================
+
+@dp.message(BroadcastStates.waiting_content)
+async def broadcast_content(
+    message: Message,
+    state: FSMContext
+):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+
+    language = get_language(
+        message.from_user.id
+    )
+
+    success, blocked, failed = await broadcast_message(
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id
+    )
+
+    await state.clear()
+
+    await message.answer(
+        TEXTS[language]["broadcast_result"].format(
+            success=success,
+            blocked=blocked,
+            failed=failed
+        ),
+        reply_markup=admin_keyboard(language)
+    )
+
+
+# =========================================================
+# UNKNOWN MESSAGE
+# =========================================================
+
+@dp.message()
+async def unknown_handler(message: Message):
+    if not message.from_user:
+        return
+
+    add_or_update_user(message)
+
+    language = get_language(
+        message.from_user.id
+    )
+
+    await message.answer(
+        TEXTS[language]["unknown"],
+        reply_markup=user_keyboard(language)
+    )
+
+
+# =========================================================
+# BOTNI ISHGA TUSHIRISH
+# =========================================================
+
+async def main():
+    print("BOTNI ISHGA TUSHIRISH BOSHLANDI", flush=True)
+
+    init_db()
+
+    print("DATABASE TAYYOR", flush=True)
+
+    me = await bot.get_me()
+
+    print(
+        f"BOT ULANDI: @{me.username}",
+        flush=True
+    )
+
+    print(
+        "POLLING BOSHLANMOQDA",
+        flush=True
+    )
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
