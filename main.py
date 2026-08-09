@@ -1717,15 +1717,16 @@ async def add_news_content(
 
         db.commit()
 
-    success, blocked, failed = (
-        await broadcast_message(
-            source_chat_id=message.chat.id,
-            source_message_id=message.message_id
-        )
+    success, blocked, failed = await broadcast_message(
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id
     )
 
     await state.clear()
 
     await message.answer(
-        TEXTS[language]["news_saved"]
-        +
+        TEXTS[language]["news_saved"],
+        reply_markup=admin_keyboard(language)
+    )
+
+    
