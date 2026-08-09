@@ -4,7 +4,6 @@ import os
 import sqlite3
 from pathlib import Path
 from html import escape
-from contextlib import closing
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -40,11 +39,7 @@ ADMIN_IDS = {
 BASE_DIR = Path(__file__).resolve().parent
 DB_NAME = BASE_DIR / "bot.db"
 
-# Broadcast uchun bir vaqtning o'zida nechta xabar
-# yuborilishini belgilaydi.
 BROADCAST_CONCURRENCY = 20
-
-# Telegram flood-limitga tushmaslik uchun.
 BROADCAST_DELAY = 0.03
 
 logging.basicConfig(
@@ -58,21 +53,20 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # =========================================================
-# ASYNC LOCKLAR
+# LOCK VA HOLATLAR
 # =========================================================
 
-# SQLite yozish operatsiyalarini tartibli bajarish uchun.
 db_write_lock = asyncio.Lock()
-
-# Bir foydalanuvchi bir xil callbackni juda tez
-# bosib yuborsa himoya.
 callback_locks = {}
 
-# =========================================================
-# FOYDALANUVCHI HOLATLARI
-# =========================================================
-
 waiting_for_phone = {}
+
+# phone orqali ovoz berishdan oldin
+# qaysi loyiha tanlanganini saqlaydi
+phone_vote_waiting = {}
+
+# link orqali ovoz berish
+link_vote_waiting = {}
 
 admin_project_waiting = set()
 admin_project_name = {}
@@ -155,6 +149,9 @@ def init_db():
 
         # -------------------------------------------------
         # VOTES
+        # vote_type:
+        # link  = havola orqali
+        # phone = telefon orqali
         # -------------------------------------------------
 
         cursor.execute("""
@@ -162,6 +159,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 project_id INTEGER NOT NULL,
+                vote_type TEXT DEFAULT 'link',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, project_id)
             )
@@ -183,11 +181,12 @@ def init_db():
             )
         """)
 
-        # -------------------------------------------------
-        # ESKI BAZANI MIGRATSIYA
-        # -------------------------------------------------
+        # =================================================
+        # USERS MIGRATION
+        # =================================================
 
         cursor.execute("PRAGMA table_info(users)")
+
         user_columns = {
             row[1]
             for row in cursor.fetchall()
@@ -230,7 +229,12 @@ def init_db():
                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             """)
 
+        # =================================================
+        # NEWS MIGRATION
+        # =================================================
+
         cursor.execute("PRAGMA table_info(news)")
+
         news_columns = {
             row[1]
             for row in cursor.fetchall()
@@ -248,9 +252,26 @@ def init_db():
                 ADD COLUMN photo_id TEXT
             """)
 
-        # -------------------------------------------------
+        # =================================================
+        # VOTES MIGRATION
+        # =================================================
+
+        cursor.execute("PRAGMA table_info(votes)")
+
+        vote_columns = {
+            row[1]
+            for row in cursor.fetchall()
+        }
+
+        if "vote_type" not in vote_columns:
+            cursor.execute("""
+                ALTER TABLE votes
+                ADD COLUMN vote_type TEXT DEFAULT 'link'
+            """)
+
+        # =================================================
         # INDEXLAR
-        # -------------------------------------------------
+        # =================================================
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_votes_user
@@ -260,6 +281,11 @@ def init_db():
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_votes_project
             ON votes(project_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_votes_type
+            ON votes(vote_type)
         """)
 
         cursor.execute("""
@@ -294,7 +320,7 @@ def init_db():
 
 
 # =========================================================
-# DATABASE ASYNC WRAPPER
+# ASYNC DATABASE
 # =========================================================
 
 
@@ -314,7 +340,7 @@ async def db_write(function, *args):
 
 
 # =========================================================
-# USER DATABASE
+# USERS
 # =========================================================
 
 
@@ -404,7 +430,9 @@ def _get_language(user_id):
             SELECT language
             FROM users
             WHERE user_id = ?
-        """, (user_id,)).fetchone()
+        """, (
+            user_id,
+        )).fetchone()
 
         if row and row[0]:
             return row[0]
@@ -477,8 +505,102 @@ async def delete_user(user_id):
     )
 
 
+def _delete_users_bulk(user_ids):
+    if not user_ids:
+        return
+
+    conn = db_connect()
+
+    try:
+        conn.executemany(
+            "DELETE FROM users WHERE user_id = ?",
+            [
+                (user_id,)
+                for user_id in user_ids
+            ]
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
 # =========================================================
-# PROJECT DATABASE
+# USER LIST
+# =========================================================
+
+
+def _get_users(limit=50, offset=0):
+    conn = db_connect()
+
+    try:
+        return conn.execute("""
+            SELECT
+                user_id,
+                username,
+                first_name,
+                language,
+                phone,
+                voted,
+                created_at
+            FROM users
+            ORDER BY created_at DESC
+            LIMIT ?
+            OFFSET ?
+        """, (
+            limit,
+            offset
+        )).fetchall()
+
+    finally:
+        conn.close()
+
+
+async def get_users(limit=50, offset=0):
+    return await db_read(
+        _get_users,
+        limit,
+        offset
+    )
+
+
+def _search_user(search):
+    conn = db_connect()
+
+    try:
+        return conn.execute("""
+            SELECT
+                user_id,
+                username,
+                first_name,
+                language,
+                phone,
+                voted,
+                created_at
+            FROM users
+            WHERE CAST(user_id AS TEXT) = ?
+               OR username LIKE ?
+            ORDER BY created_at DESC
+            LIMIT 20
+        """, (
+            search,
+            f"%{search.lstrip('@')}%"
+        )).fetchall()
+
+    finally:
+        conn.close()
+
+
+async def search_user(search):
+    return await db_read(
+        _search_user,
+        search
+    )
+
+
+# =========================================================
+# PROJECTS
 # =========================================================
 
 
@@ -594,34 +716,33 @@ async def delete_project(project_id):
 
 
 # =========================================================
-# VOTE DATABASE
+# VOTES
 # =========================================================
 
 
 def _confirm_vote(
     user_id,
-    project_id
+    project_id,
+    vote_type
 ):
     conn = db_connect()
 
     try:
         cursor = conn.cursor()
 
-        cursor.execute("""
+        project = cursor.execute("""
             SELECT id, name
             FROM projects
             WHERE id = ?
         """, (
             project_id,
-        ))
-
-        project = cursor.fetchone()
+        )).fetchone()
 
         if not project:
             return "not_found", None
 
-        cursor.execute("""
-            SELECT id
+        existing = cursor.execute("""
+            SELECT id, vote_type
             FROM votes
             WHERE user_id = ?
             AND project_id = ?
@@ -629,18 +750,26 @@ def _confirm_vote(
         """, (
             user_id,
             project_id
-        ))
+        )).fetchone()
 
-        if cursor.fetchone():
+        if existing:
             return "already", project
+
+        if vote_type not in ("link", "phone"):
+            vote_type = "link"
 
         cursor.execute("""
             INSERT INTO votes
-            (user_id, project_id)
-            VALUES (?, ?)
+            (
+                user_id,
+                project_id,
+                vote_type
+            )
+            VALUES (?, ?, ?)
         """, (
             user_id,
-            project_id
+            project_id,
+            vote_type
         ))
 
         cursor.execute("""
@@ -657,7 +786,6 @@ def _confirm_vote(
 
     except sqlite3.IntegrityError:
         conn.rollback()
-
         return "already", None
 
     finally:
@@ -666,17 +794,66 @@ def _confirm_vote(
 
 async def confirm_vote_db(
     user_id,
-    project_id
+    project_id,
+    vote_type
 ):
     return await db_write(
         _confirm_vote,
         user_id,
+        project_id,
+        vote_type
+    )
+
+
+def _get_project_statistics(project_id):
+    conn = db_connect()
+
+    try:
+        total = conn.execute("""
+            SELECT COUNT(*)
+            FROM votes
+            WHERE project_id = ?
+        """, (
+            project_id,
+        )).fetchone()[0]
+
+        link_votes = conn.execute("""
+            SELECT COUNT(*)
+            FROM votes
+            WHERE project_id = ?
+            AND vote_type = 'link'
+        """, (
+            project_id,
+        )).fetchone()[0]
+
+        phone_votes = conn.execute("""
+            SELECT COUNT(*)
+            FROM votes
+            WHERE project_id = ?
+            AND vote_type = 'phone'
+        """, (
+            project_id,
+        )).fetchone()[0]
+
+        return {
+            "total": total,
+            "link": link_votes,
+            "phone": phone_votes,
+        }
+
+    finally:
+        conn.close()
+
+
+async def get_project_statistics(project_id):
+    return await db_read(
+        _get_project_statistics,
         project_id
     )
 
 
 # =========================================================
-# NEWS DATABASE
+# NEWS
 # =========================================================
 
 
@@ -762,7 +939,7 @@ async def delete_news(news_id):
 
 
 # =========================================================
-# QUESTIONS DATABASE
+# QUESTIONS
 # =========================================================
 
 
@@ -928,6 +1105,18 @@ def _get_statistics():
             FROM votes
         """).fetchone()[0]
 
+        link_votes = cursor.execute("""
+            SELECT COUNT(*)
+            FROM votes
+            WHERE vote_type = 'link'
+        """).fetchone()[0]
+
+        phone_votes = cursor.execute("""
+            SELECT COUNT(*)
+            FROM votes
+            WHERE vote_type = 'phone'
+        """).fetchone()[0]
+
         total_questions = cursor.execute("""
             SELECT COUNT(*)
             FROM questions
@@ -950,6 +1139,8 @@ def _get_statistics():
             "total_projects": total_projects,
             "total_news": total_news,
             "total_votes": total_votes,
+            "link_votes": link_votes,
+            "phone_votes": phone_votes,
             "total_questions": total_questions,
             "unanswered": unanswered,
         }
@@ -965,7 +1156,7 @@ async def get_statistics():
 
 
 # =========================================================
-# ALL USER IDS
+# USER IDS
 # =========================================================
 
 
@@ -1035,10 +1226,23 @@ def uz_keyboard():
             ],
             [
                 KeyboardButton(
+                    text="🏆 TOP loyihalar"
+                ),
+                KeyboardButton(
+                    text="📊 Natijalar"
+                )
+            ],
+            [
+                KeyboardButton(
                     text="📰 Yangiliklar"
                 ),
                 KeyboardButton(
                     text="❓ Savol-javob"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="❓ Yordam"
                 )
             ]
         ],
@@ -1056,10 +1260,23 @@ def ru_keyboard():
             ],
             [
                 KeyboardButton(
+                    text="🏆 TOP проекты"
+                ),
+                KeyboardButton(
+                    text="📊 Результаты"
+                )
+            ],
+            [
+                KeyboardButton(
                     text="📰 Новости"
                 ),
                 KeyboardButton(
                     text="❓ Вопрос-ответ"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="❓ Помощь"
                 )
             ]
         ],
@@ -1073,6 +1290,9 @@ def admin_keyboard():
             [
                 KeyboardButton(
                     text="📊 Statistika"
+                ),
+                KeyboardButton(
+                    text="👥 Foydalanuvchilar"
                 )
             ],
             [
@@ -1097,6 +1317,11 @@ def admin_keyboard():
             ],
             [
                 KeyboardButton(
+                    text="🗳 Loyiha ovozlari"
+                )
+            ],
+            [
+                KeyboardButton(
                     text="🗑 Ma'lumot o‘chirish"
                 )
             ],
@@ -1107,6 +1332,31 @@ def admin_keyboard():
             ]
         ],
         resize_keyboard=True
+    )
+
+
+def users_admin_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👥 Foydalanuvchilar ro‘yxati",
+                    callback_data="users_list_0"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔎 Foydalanuvchi qidirish",
+                    callback_data="users_search"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Ovoz statistikasi",
+                    callback_data="users_vote_stats"
+                )
+            ]
+        ]
     )
 
 
@@ -1182,19 +1432,13 @@ def phone_keyboard_ru():
 
 def clear_admin_state(user_id):
     admin_project_waiting.discard(user_id)
-    admin_project_name.pop(
-        user_id,
-        None
-    )
+    admin_project_name.pop(user_id, None)
 
     admin_news_waiting.discard(user_id)
     admin_broadcast_waiting.discard(user_id)
     admin_delete_waiting.discard(user_id)
 
-    admin_answer_waiting.pop(
-        user_id,
-        None
-    )
+    admin_answer_waiting.pop(user_id, None)
 
     question_waiting.discard(user_id)
 
@@ -1207,17 +1451,28 @@ def clear_admin_state(user_id):
 @dp.message(CommandStart())
 async def start_handler(message: Message):
 
+    user_id = message.from_user.id
+
     await add_user(
-        message.from_user.id,
+        user_id,
         message.from_user.username,
         message.from_user.first_name
     )
 
-    await message.answer(
-        "Assalomu alaykum! 👋\n\n"
-        "Tilni tanlang / Выберите язык:",
-        reply_markup=language_keyboard()
-    )
+    language = await get_language(user_id)
+
+    if language == "ru":
+        await message.answer(
+            "👋 Добро пожаловать!\n\n"
+            "Выберите нужный раздел:",
+            reply_markup=ru_keyboard()
+        )
+    else:
+        await message.answer(
+            "👋 Assalomu alaykum!\n\n"
+            "Kerakli bo‘limni tanlang:",
+            reply_markup=uz_keyboard()
+        )
 
 
 # =========================================================
@@ -1226,9 +1481,7 @@ async def start_handler(message: Message):
 
 
 @dp.callback_query(F.data == "lang_uz")
-async def language_uz(
-    callback: CallbackQuery
-):
+async def language_uz(callback: CallbackQuery):
 
     await set_language(
         callback.from_user.id,
@@ -1244,9 +1497,7 @@ async def language_uz(
 
 
 @dp.callback_query(F.data == "lang_ru")
-async def language_ru(
-    callback: CallbackQuery
-):
+async def language_ru(callback: CallbackQuery):
 
     await set_language(
         callback.from_user.id,
@@ -1270,18 +1521,17 @@ async def show_projects(
     message: Message,
     language="uz"
 ):
+
     projects = await get_projects()
 
     if not projects:
 
-        text = (
+        await message.answer(
             "📌 Hozircha loyihalar qo‘shilmagan."
             if language == "uz"
             else
             "📌 Пока проекты не добавлены."
         )
-
-        await message.answer(text)
 
         return
 
@@ -1291,13 +1541,13 @@ async def show_projects(
             open_text = "🔗 Открыть ссылку"
             vote_text = "🗳 Голосовать"
             description = (
-                "Для голосования нажмите кнопку ниже."
+                "Выберите способ голосования."
             )
         else:
             open_text = "🔗 Havolani ochish"
             vote_text = "🗳 Ovoz berish"
             description = (
-                "Ovoz berish uchun quyidagi tugmani bosing."
+                "Ovoz berish usulini tanlang."
             )
 
         keyboard = InlineKeyboardMarkup(
@@ -1360,12 +1610,8 @@ async def projects_ru(message: Message):
 # =========================================================
 
 
-@dp.callback_query(
-    F.data.startswith("vote_")
-)
-async def vote_start(
-    callback: CallbackQuery
-):
+@dp.callback_query(F.data.startswith("vote_"))
+async def vote_start(callback: CallbackQuery):
 
     try:
         project_id = int(
@@ -1381,9 +1627,105 @@ async def vote_start(
 
         return
 
-    project = await get_project(
-        project_id
+    project = await get_project(project_id)
+
+    if not project:
+
+        await callback.answer(
+            "❌ Loyiha topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    user_id = callback.from_user.id
+    language = await get_language(user_id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "🔗 Ovoz berish"
+                        if language == "uz"
+                        else
+                        "🔗 Голосовать"
+                    ),
+                    url=project[2]
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "📱 Telefon orqali ovoz berish"
+                        if language == "uz"
+                        else
+                        "📱 Голосование по телефону"
+                    ),
+                    callback_data=f"phone_vote_{project_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "🔗 Havola orqali ovoz berdim"
+                        if language == "uz"
+                        else
+                        "🔗 Я проголосовал по ссылке"
+                    ),
+                    callback_data=f"link_vote_{project_id}"
+                )
+            ]
+        ]
     )
+
+    if language == "ru":
+
+        await callback.message.answer(
+            f"🗳 <b>{escape(str(project[1]))}</b>\n\n"
+            "Выберите способ голосования:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    else:
+
+        await callback.message.answer(
+            f"🗳 <b>{escape(str(project[1]))}</b>\n\n"
+            "Ovoz berish usulini tanlang:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    await callback.answer()
+
+
+# =========================================================
+# TELEFON ORQALI OVOZ BOSHLASH
+# =========================================================
+
+
+@dp.callback_query(F.data.startswith("phone_vote_"))
+async def phone_vote_start(callback: CallbackQuery):
+
+    try:
+        project_id = int(
+            callback.data.replace(
+                "phone_vote_",
+                ""
+            )
+        )
+
+    except ValueError:
+
+        await callback.answer(
+            "❌ Xatolik.",
+            show_alert=True
+        )
+
+        return
+
+    project = await get_project(project_id)
 
     if not project:
 
@@ -1398,28 +1740,26 @@ async def vote_start(
 
     waiting_for_phone[user_id] = project_id
 
-    language = await get_language(
-        user_id
-    )
+    language = await get_language(user_id)
 
     if language == "ru":
 
         await callback.message.answer(
-            f"🗳 <b>{escape(str(project[1]))}</b>\n\n"
-            "Продолжите голосование, отправив "
-            "свой номер телефона.",
-            reply_markup=phone_keyboard_ru(),
-            parse_mode="HTML"
+            "📱 Для продолжения отправьте свой "
+            "номер телефона.\n\n"
+            "Telegram запросит разрешение на "
+            "передачу номера.",
+            reply_markup=phone_keyboard_ru()
         )
 
     else:
 
         await callback.message.answer(
-            f"🗳 <b>{escape(str(project[1]))}</b>\n\n"
-            "Ovoz berishni davom ettirish uchun "
-            "telefon raqamingizni yuboring.",
-            reply_markup=phone_keyboard_uz(),
-            parse_mode="HTML"
+            "📱 Davom etish uchun telefon "
+            "raqamingizni yuboring.\n\n"
+            "Telegram telefon raqamingizni yuborishga "
+            "roziligingizni so‘raydi.",
+            reply_markup=phone_keyboard_uz()
         )
 
     await callback.answer()
@@ -1470,9 +1810,7 @@ async def receive_phone(message: Message):
         contact.phone_number
     )
 
-    project = await get_project(
-        project_id
-    )
+    project = await get_project(project_id)
 
     if not project:
 
@@ -1482,39 +1820,50 @@ async def receive_phone(message: Message):
 
         return
 
-    language = await get_language(
-        user_id
+    language = await get_language(user_id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "🔗 Ovoz berish"
+                        if language == "uz"
+                        else
+                        "🔗 Голосовать"
+                    ),
+                    url=project[2]
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "✅ Ovoz berdim"
+                        if language == "uz"
+                        else
+                        "✅ Я проголосовал"
+                    ),
+                    callback_data=(
+                        f"confirm_phone_{project_id}"
+                    )
+                )
+            ]
+        ]
     )
 
     if language == "ru":
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔗 Голосовать",
-                        url=project[2]
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="✅ Я проголосовал",
-                        callback_data=(
-                            f"confirm_vote_{project_id}"
-                        )
-                    )
-                ]
-            ]
-        )
 
         await message.answer(
             f"✅ Номер принят.\n\n"
             f"📌 Проект: "
             f"<b>{escape(str(project[1]))}</b>\n\n"
             "1️⃣ Нажмите «Голосовать».\n"
-            "2️⃣ Проголосуйте на странице проекта.\n"
-            "3️⃣ Вернитесь в бот и нажмите "
-            "«Я проголосовал».",
+            "2️⃣ На официальной странице завершите "
+            "голосование.\n"
+            "3️⃣ Вернитесь сюда и нажмите "
+            "«Я проголосовал».\n\n"
+            "⚠️ SMS-код вводится только на официальной "
+            "странице Open Budget.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -1526,33 +1875,17 @@ async def receive_phone(message: Message):
 
     else:
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔗 Ovoz berish",
-                        url=project[2]
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="✅ Ovoz berdim",
-                        callback_data=(
-                            f"confirm_vote_{project_id}"
-                        )
-                    )
-                ]
-            ]
-        )
-
         await message.answer(
             f"✅ Telefon raqamingiz qabul qilindi.\n\n"
             f"📌 Loyiha: "
             f"<b>{escape(str(project[1]))}</b>\n\n"
             "1️⃣ «Ovoz berish» tugmasini bosing.\n"
-            "2️⃣ Loyiha sahifasida ovoz bering.\n"
-            "3️⃣ Botga qaytib, «Ovoz berdim» "
-            "tugmasini bosing.",
+            "2️⃣ Rasmiy sahifada ovoz berish jarayonini "
+            "yakunlang.\n"
+            "3️⃣ Botga qaytib «Ovoz berdim» tugmasini "
+            "bosing.\n\n"
+            "⚠️ SMS kodi faqat rasmiy Open Budget "
+            "sahifasining o‘zida kiritiladi.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -1564,21 +1897,117 @@ async def receive_phone(message: Message):
 
 
 # =========================================================
-# OVOZ TASDIQLASH
+# HAVOLA ORQALI OVOZ TASDIQLASH
 # =========================================================
 
 
-@dp.callback_query(
-    F.data.startswith("confirm_vote_")
-)
-async def confirm_vote(
+@dp.callback_query(F.data.startswith("link_vote_"))
+async def link_vote_confirm_start(
     callback: CallbackQuery
 ):
 
     try:
         project_id = int(
             callback.data.replace(
-                "confirm_vote_",
+                "link_vote_",
+                ""
+            )
+        )
+
+    except ValueError:
+
+        await callback.answer(
+            "❌ Xatolik.",
+            show_alert=True
+        )
+
+        return
+
+    project = await get_project(project_id)
+
+    if not project:
+
+        await callback.answer(
+            "❌ Loyiha topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    user_id = callback.from_user.id
+
+    status, _ = await confirm_vote_db(
+        user_id,
+        project_id,
+        "link"
+    )
+
+    if status == "already":
+
+        await callback.answer(
+            "✅ Siz bu loyiha uchun avval "
+            "tasdiqlagansiz.",
+            show_alert=True
+        )
+
+        return
+
+    if status == "not_found":
+
+        await callback.answer(
+            "❌ Loyiha topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    language = await get_language(user_id)
+
+    if language == "ru":
+
+        await callback.message.answer(
+            f"✅ <b>Голос подтверждён!</b>\n\n"
+            f"📌 Проект: "
+            f"<b>{escape(str(project[1]))}</b>\n"
+            f"🔗 Способ: ссылка",
+            parse_mode="HTML",
+            reply_markup=ru_keyboard()
+        )
+
+        await callback.answer(
+            "✅ Голос сохранён!"
+        )
+
+    else:
+
+        await callback.message.answer(
+            f"✅ <b>Ovoz tasdiqlandi!</b>\n\n"
+            f"📌 Loyiha: "
+            f"<b>{escape(str(project[1]))}</b>\n"
+            f"🔗 Usul: havola orqali",
+            parse_mode="HTML",
+            reply_markup=uz_keyboard()
+        )
+
+        await callback.answer(
+            "✅ Ovoz saqlandi!"
+        )
+
+
+# =========================================================
+# TELEFON ORQALI OVOZ TASDIQLASH
+# =========================================================
+
+
+@dp.callback_query(F.data.startswith("confirm_phone_"))
+async def confirm_phone_vote(
+    callback: CallbackQuery
+):
+
+    try:
+        project_id = int(
+            callback.data.replace(
+                "confirm_phone_",
                 ""
             )
         )
@@ -1594,9 +2023,7 @@ async def confirm_vote(
 
     user_id = callback.from_user.id
 
-    # Bir foydalanuvchining bir xil callbacklari
-    # bir vaqtda ishlamasligi uchun lock.
-    lock_key = f"vote:{user_id}:{project_id}"
+    lock_key = f"phone_vote:{user_id}:{project_id}"
 
     if lock_key not in callback_locks:
         callback_locks[lock_key] = asyncio.Lock()
@@ -1607,7 +2034,8 @@ async def confirm_vote(
 
         status, project = await confirm_vote_db(
             user_id,
-            project_id
+            project_id,
+            "phone"
         )
 
     callback_locks.pop(
@@ -1627,30 +2055,28 @@ async def confirm_vote(
     if status == "already":
 
         await callback.answer(
-            "✅ Siz bu loyiha uchun ovoz "
-            "berganingizni allaqachon tasdiqlagansiz.",
+            "✅ Siz bu loyiha uchun avval "
+            "ovozni tasdiqlagansiz.",
             show_alert=True
         )
 
         return
 
-    language = await get_language(
-        user_id
-    )
+    language = await get_language(user_id)
 
     if language == "ru":
 
         await callback.message.answer(
             f"✅ <b>Голос подтверждён!</b>\n\n"
             f"📌 Проект: "
-            f"<b>{escape(str(project[1]))}</b>\n\n"
-            "Ваше подтверждение сохранено.",
+            f"<b>{escape(str(project[1]))}</b>\n"
+            "📱 Способ: телефон",
             parse_mode="HTML",
             reply_markup=ru_keyboard()
         )
 
         await callback.answer(
-            "✅ Голос подтверждён!"
+            "✅ Голос сохранён!"
         )
 
     else:
@@ -1658,15 +2084,14 @@ async def confirm_vote(
         await callback.message.answer(
             f"✅ <b>Ovoz tasdiqlandi!</b>\n\n"
             f"📌 Loyiha: "
-            f"<b>{escape(str(project[1]))}</b>\n\n"
-            "Sizning ovoz berganingiz haqidagi "
-            "tasdiq saqlandi.",
+            f"<b>{escape(str(project[1]))}</b>\n"
+            "📱 Usul: telefon orqali",
             parse_mode="HTML",
             reply_markup=uz_keyboard()
         )
 
         await callback.answer(
-            "✅ Ovoz tasdiqlandi!"
+            "✅ Ovoz saqlandi!"
         )
 
 
@@ -1708,6 +2133,182 @@ async def cancel_phone(message: Message):
 
 
 # =========================================================
+# TOP LOYIHALAR
+# =========================================================
+
+
+def _get_top_projects():
+    conn = db_connect()
+
+    try:
+        return conn.execute("""
+            SELECT
+                p.id,
+                p.name,
+                COUNT(v.id) AS total
+            FROM projects p
+            LEFT JOIN votes v
+                ON p.id = v.project_id
+            GROUP BY p.id
+            ORDER BY total DESC, p.id DESC
+            LIMIT 10
+        """).fetchall()
+
+    finally:
+        conn.close()
+
+
+async def get_top_projects():
+    return await db_read(
+        _get_top_projects
+    )
+
+
+async def show_top_projects(
+    message: Message,
+    language="uz"
+):
+
+    projects = await get_top_projects()
+
+    if not projects:
+
+        await message.answer(
+            "🏆 Hozircha loyihalar yo‘q."
+            if language == "uz"
+            else
+            "🏆 Пока проектов нет."
+        )
+
+        return
+
+    text = (
+        "🏆 <b>TOP LOYIHALAR</b>\n\n"
+        if language == "uz"
+        else
+        "🏆 <b>ТОП ПРОЕКТОВ</b>\n\n"
+    )
+
+    medals = [
+        "🥇",
+        "🥈",
+        "🥉",
+    ]
+
+    for index, row in enumerate(projects):
+
+        project_id, name, total = row
+
+        medal = (
+            medals[index]
+            if index < 3
+            else f"{index + 1}."
+        )
+
+        text += (
+            f"{medal} "
+            f"<b>{escape(str(name))}</b> — "
+            f"{total} 🗳\n"
+        )
+
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
+
+
+@dp.message(F.text == "🏆 TOP loyihalar")
+async def top_uz(message: Message):
+
+    await show_top_projects(
+        message,
+        "uz"
+    )
+
+
+@dp.message(F.text == "🏆 TOP проекты")
+async def top_ru(message: Message):
+
+    await show_top_projects(
+        message,
+        "ru"
+    )
+
+
+# =========================================================
+# NATIJALAR
+# =========================================================
+
+
+@dp.message(F.text == "📊 Natijalar")
+async def results_uz(message: Message):
+
+    projects = await get_projects()
+
+    if not projects:
+
+        await message.answer(
+            "📊 Hozircha natijalar yo‘q."
+        )
+
+        return
+
+    text = "📊 <b>NATIJALAR</b>\n\n"
+
+    for project_id, name, link in projects:
+
+        stats = await get_project_statistics(
+            project_id
+        )
+
+        text += (
+            f"📌 <b>{escape(str(name))}</b>\n"
+            f"🗳 Jami: {stats['total']}\n"
+            f"🔗 Havola: {stats['link']}\n"
+            f"📱 Telefon: {stats['phone']}\n\n"
+        )
+
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
+
+
+@dp.message(F.text == "📊 Результаты")
+async def results_ru(message: Message):
+
+    projects = await get_projects()
+
+    if not projects:
+
+        await message.answer(
+            "📊 Пока результатов нет."
+        )
+
+        return
+
+    text = "📊 <b>РЕЗУЛЬТАТЫ</b>\n\n"
+
+    for project_id, name, link in projects:
+
+        stats = await get_project_statistics(
+            project_id
+        )
+
+        text += (
+            f"📌 <b>{escape(str(name))}</b>\n"
+            f"🗳 Всего: {stats['total']}\n"
+            f"🔗 Ссылка: {stats['link']}\n"
+            f"📱 Телефон: {stats['phone']}\n\n"
+        )
+
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
 # YANGILIKLAR
 # =========================================================
 
@@ -1743,23 +2344,13 @@ async def show_news(
 
         elif text:
 
-            prefix = (
-                "📰 "
-            )
-
             await message.answer(
-                prefix + str(text)
+                "📰 " + str(text)
             )
 
 
 @dp.message(F.text == "📰 Yangiliklar")
 async def news_uz(message: Message):
-
-    await add_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
 
     await show_news(
         message,
@@ -1769,12 +2360,6 @@ async def news_uz(message: Message):
 
 @dp.message(F.text == "📰 Новости")
 async def news_ru(message: Message):
-
-    await add_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
 
     await show_news(
         message,
@@ -1792,22 +2377,13 @@ async def question_answer_uz(
     message: Message
 ):
 
-    await add_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
-
     question_waiting.add(
         message.from_user.id
     )
 
     await message.answer(
         "❓ <b>SAVOL-JAVOB</b>\n\n"
-        "Savolingizni shu yerga yozib yuboring.\n\n"
-        "✍️ Masalan:\n"
-        "Ovoz berish qanday amalga oshiriladi?\n\n"
-        "Bekor qilish uchun /start ni bosing.",
+        "Savolingizni shu yerga yozib yuboring.",
         parse_mode="HTML"
     )
 
@@ -1816,12 +2392,6 @@ async def question_answer_uz(
 async def question_answer_ru(
     message: Message
 ):
-
-    await add_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
-    )
 
     question_waiting.add(
         message.from_user.id
@@ -1854,9 +2424,7 @@ async def save_question(
     if not text:
         return True
 
-    question_waiting.discard(
-        user_id
-    )
+    question_waiting.discard(user_id)
 
     question_id = await insert_question(
         user_id,
@@ -1869,18 +2437,6 @@ async def save_question(
         else "Username yo‘q"
     )
 
-    safe_name = escape(
-        message.from_user.first_name or ""
-    )
-
-    safe_username = escape(
-        username
-    )
-
-    safe_question = escape(
-        text
-    )
-
     for admin_id in ADMIN_IDS:
 
         try:
@@ -1889,10 +2445,11 @@ async def save_question(
                 admin_id,
                 "❓ <b>YANGI SAVOL</b>\n\n"
                 f"🆔 Savol ID: {question_id}\n"
-                f"👤 Foydalanuvchi: {safe_name}\n"
-                f"🔹 {safe_username}\n"
+                f"👤 Foydalanuvchi: "
+                f"{escape(message.from_user.first_name or '')}\n"
+                f"🔹 {escape(username)}\n"
                 f"🆔 User ID: {user_id}\n\n"
-                f"💬 Savol:\n{safe_question}",
+                f"💬 Savol:\n{escape(text)}",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
@@ -1916,9 +2473,7 @@ async def save_question(
             )
 
     await message.answer(
-        "✅ Savolingiz qabul qilindi.\n\n"
-        "Administrator javob berganidan keyin "
-        "javob sizga yuboriladi."
+        "✅ Savolingiz qabul qilindi."
     )
 
     return True
@@ -2046,19 +2601,10 @@ async def send_question_answer(
         answer
     )
 
-    if status == "not_found":
+    if status != "success":
 
         await message.answer(
-            "❌ Savol topilmadi.",
-            reply_markup=admin_keyboard()
-        )
-
-        return True
-
-    if status == "already":
-
-        await message.answer(
-            "⚠️ Bu savolga allaqachon javob berilgan.",
+            "⚠️ Savolga javob berib bo‘lmadi.",
             reply_markup=admin_keyboard()
         )
 
@@ -2099,8 +2645,7 @@ async def send_question_answer(
         )
 
         await message.answer(
-            "⚠️ Javob bazaga saqlandi, "
-            "lekin yuborishda xatolik bo‘ldi.",
+            "⚠️ Javob bazaga saqlandi.",
             reply_markup=admin_keyboard()
         )
 
@@ -2160,24 +2705,385 @@ async def statistics(
         "📊 <b>STATISTIKA</b>\n\n"
         f"👥 Jami foydalanuvchilar: "
         f"{stats['total_users']}\n\n"
-        f"📱 Telefon raqami yuborganlar: "
-        f"{stats['phone_users']}\n\n"
-        f"🗳 Jami ovoz tasdiqlari: "
+
+        f"🗳 Jami tasdiqlangan ovozlar: "
         f"{stats['total_votes']}\n"
-        f"✅ Ovoz berganlar: "
+
+        f"🔗 Havola orqali: "
+        f"{stats['link_votes']}\n"
+
+        f"📱 Telefon orqali: "
+        f"{stats['phone_votes']}\n\n"
+
+        f"📱 Telefon raqami yuborganlar: "
+        f"{stats['phone_users']}\n"
+
+        f"✅ Ovoz bergan foydalanuvchilar: "
         f"{stats['voted_users']}\n"
-        f"⏳ Ovozini tasdiqlamaganlar: "
+
+        f"⏳ Ovoz bermaganlar: "
         f"{stats['not_voted']}\n\n"
+
         f"📌 Loyihalar: "
         f"{stats['total_projects']}\n"
+
         f"📰 Yangiliklar: "
         f"{stats['total_news']}\n\n"
+
         f"❓ Jami savollar: "
         f"{stats['total_questions']}\n"
+
         f"💬 Javobsiz savollar: "
         f"{stats['unanswered']}",
         parse_mode="HTML"
     )
+
+
+# =========================================================
+# FOYDALANUVCHILAR ADMIN BO'LIMI
+# =========================================================
+
+
+@dp.message(F.text == "👥 Foydalanuvchilar")
+async def users_admin(
+    message: Message
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    stats = await get_statistics()
+
+    await message.answer(
+        "👥 <b>FOYDALANUVCHILAR</b>\n\n"
+        f"👤 Jami: <b>{stats['total_users']}</b>\n\n"
+        f"🗳 Ovoz berganlar: "
+        f"<b>{stats['voted_users']}</b>\n"
+        f"⏳ Ovoz bermaganlar: "
+        f"<b>{stats['not_voted']}</b>\n\n"
+        f"🔗 Havola orqali ovozlar: "
+        f"<b>{stats['link_votes']}</b>\n"
+        f"📱 Telefon orqali ovozlar: "
+        f"<b>{stats['phone_votes']}</b>\n\n"
+        f"📱 Telefon raqami yuborganlar: "
+        f"<b>{stats['phone_users']}</b>",
+        reply_markup=users_admin_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# USER LIST
+# =========================================================
+
+
+@dp.callback_query(
+    F.data.startswith("users_list_")
+)
+async def users_list(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "⛔ Ruxsat yo‘q.",
+            show_alert=True
+        )
+
+        return
+
+    try:
+
+        offset = int(
+            callback.data.replace(
+                "users_list_",
+                ""
+            )
+        )
+
+    except ValueError:
+
+        offset = 0
+
+    users = await get_users(
+        30,
+        offset
+    )
+
+    if not users:
+
+        await callback.message.answer(
+            "👥 Foydalanuvchilar topilmadi."
+        )
+
+        await callback.answer()
+
+        return
+
+    for row in users:
+
+        (
+            user_id,
+            username,
+            first_name,
+            language,
+            phone,
+            voted,
+            created_at
+        ) = row
+
+        username_text = (
+            f"@{username}"
+            if username
+            else "Username yo‘q"
+        )
+
+        phone_text = (
+            phone
+            if phone
+            else "Telefon yo‘q"
+        )
+
+        voted_text = (
+            "✅ Ovoz bergan"
+            if voted
+            else "⏳ Ovoz bermagan"
+        )
+
+        await callback.message.answer(
+            "👤 <b>FOYDALANUVCHI</b>\n\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"👤 Ism: {escape(str(first_name or ''))}\n"
+            f"🔹 Username: {escape(username_text)}\n"
+            f"📱 Telefon: <code>{escape(str(phone_text))}</code>\n"
+            f"🌐 Til: {escape(str(language or 'uz'))}\n"
+            f"🗳 Holat: {voted_text}\n"
+            f"📅 Qo‘shilgan: {escape(str(created_at))}",
+            parse_mode="HTML"
+        )
+
+    navigation = []
+
+    if offset > 0:
+        navigation.append(
+            InlineKeyboardButton(
+                text="⬅️ Oldingi",
+                callback_data=f"users_list_{max(0, offset - 30)}"
+            )
+        )
+
+    if len(users) == 30:
+        navigation.append(
+            InlineKeyboardButton(
+                text="Keyingi ➡️",
+                callback_data=f"users_list_{offset + 30}"
+            )
+        )
+
+    if navigation:
+
+        await callback.message.answer(
+            "📄 Sahifa:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    navigation
+                ]
+            )
+        )
+
+    await callback.answer()
+
+
+# =========================================================
+# USER SEARCH
+# =========================================================
+
+
+@dp.callback_query(
+    F.data == "users_search"
+)
+async def users_search_start(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "⛔ Ruxsat yo‘q.",
+            show_alert=True
+        )
+        return
+
+    await callback.message.answer(
+        "🔎 Foydalanuvchi qidirish.\n\n"
+        "User ID yoki username yuboring.\n\n"
+        "Masalan:\n"
+        "<code>123456789</code>\n"
+        "<code>@username</code>",
+        parse_mode="HTML"
+    )
+
+    callback_locks[
+        f"user_search:{callback.from_user.id}"
+    ] = True
+
+    await callback.answer()
+
+
+# =========================================================
+# USER VOTE STATS
+# =========================================================
+
+
+@dp.callback_query(
+    F.data == "users_vote_stats"
+)
+async def users_vote_stats(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "⛔ Ruxsat yo‘q.",
+            show_alert=True
+        )
+        return
+
+    stats = await get_statistics()
+
+    await callback.message.answer(
+        "🗳 <b>OVOZ BERISH STATISTIKASI</b>\n\n"
+        f"🗳 Jami: <b>{stats['total_votes']}</b>\n\n"
+        f"🔗 Havola orqali: "
+        f"<b>{stats['link_votes']}</b>\n"
+        f"📱 Telefon orqali: "
+        f"<b>{stats['phone_votes']}</b>\n\n"
+        f"👤 Ovoz bergan foydalanuvchilar: "
+        f"<b>{stats['voted_users']}</b>\n"
+        f"⏳ Ovoz bermaganlar: "
+        f"<b>{stats['not_voted']}</b>",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# ADMIN LOYIHA OVOZLARI
+# =========================================================
+
+
+@dp.message(F.text == "🗳 Loyiha ovozlari")
+async def project_vote_statistics(
+    message: Message
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    projects = await get_projects()
+
+    if not projects:
+
+        await message.answer(
+            "📌 Hozircha loyihalar yo‘q."
+        )
+
+        return
+
+    buttons = []
+
+    for project_id, name, link in projects[:80]:
+
+        title = str(name)
+
+        if len(title) > 35:
+            title = title[:35] + "..."
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📊 {project_id} — {title}",
+                callback_data=f"project_stats_{project_id}"
+            )
+        ])
+
+    await message.answer(
+        "🗳 Qaysi loyiha statistikasini ko‘rmoqchisiz?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+    )
+
+
+@dp.callback_query(
+    F.data.startswith("project_stats_")
+)
+async def project_stats_callback(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "⛔ Ruxsat yo‘q.",
+            show_alert=True
+        )
+        return
+
+    try:
+
+        project_id = int(
+            callback.data.replace(
+                "project_stats_",
+                ""
+            )
+        )
+
+    except ValueError:
+
+        await callback.answer(
+            "❌ Xatolik.",
+            show_alert=True
+        )
+        return
+
+    project = await get_project(
+        project_id
+    )
+
+    if not project:
+
+        await callback.answer(
+            "❌ Loyiha topilmadi.",
+            show_alert=True
+        )
+        return
+
+    stats = await get_project_statistics(
+        project_id
+    )
+
+    await callback.message.answer(
+        "📊 <b>LOYIHA STATISTIKASI</b>\n\n"
+        f"📌 <b>{escape(str(project[1]))}</b>\n\n"
+        f"🗳 Jami: <b>{stats['total']}</b>\n"
+        f"🔗 Havola orqali: <b>{stats['link']}</b>\n"
+        f"📱 Telefon orqali: <b>{stats['phone']}</b>",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
 
 
 # =========================================================
@@ -2205,9 +3111,7 @@ async def add_project_start(
 
     await message.answer(
         "➕ <b>YANGI LOYIHA</b>\n\n"
-        "1️⃣ Loyiha nomini yuboring.\n\n"
-        "Masalan:\n"
-        "1-maktab loyihasi",
+        "1️⃣ Loyiha nomini yuboring.",
         parse_mode="HTML"
     )
 
@@ -2245,9 +3149,7 @@ async def save_project(
 
         await message.answer(
             "✅ Loyiha nomi saqlandi.\n\n"
-            "2️⃣ Endi loyiha havolasini yuboring.\n\n"
-            "Masalan:\n"
-            "https://example.com"
+            "2️⃣ Endi loyiha havolasini yuboring."
         )
 
         return True
@@ -2282,9 +3184,7 @@ async def save_project(
     await message.answer(
         "✅ <b>LOYIHA SAQLANDI!</b>\n\n"
         f"📌 Nomi: {escape(name)}\n"
-        f"🔗 Havola: {escape(link)}\n\n"
-        "⚠️ Loyiha bazaga saqlandi.\n"
-        "Admin o‘chirmaguncha yo‘qolmaydi.",
+        f"🔗 Havola: {escape(link)}",
         reply_markup=admin_keyboard(),
         parse_mode="HTML"
     )
@@ -2318,10 +3218,7 @@ async def add_news_start(
     await message.answer(
         "📰 <b>YANGILIK QO‘SHISH</b>\n\n"
         "📝 Matn yoki 🖼 rasm yuboring.\n\n"
-        "Rasmga caption yozsangiz, "
-        "caption ham saqlanadi.\n\n"
-        "⚠️ Saqlangan yangilik admin o‘chirmaguncha "
-        "yo‘qolmaydi.",
+        "Rasmga caption yozishingiz mumkin.",
         parse_mode="HTML"
     )
 
@@ -2353,9 +3250,7 @@ async def save_news(
         )
 
         await message.answer(
-            "✅ <b>YANGILIK SAQLANDI!</b>\n\n"
-            "🖼 Rasm bazaga saqlandi.\n"
-            "Admin o‘chirmaguncha saqlanadi.",
+            "✅ <b>YANGILIK SAQLANDI!</b>",
             reply_markup=admin_keyboard(),
             parse_mode="HTML"
         )
@@ -2376,8 +3271,7 @@ async def save_news(
         )
 
         await message.answer(
-            "✅ <b>YANGILIK SAQLANDI!</b>\n\n"
-            "Admin o‘chirmaguncha yo‘qolmaydi.",
+            "✅ <b>YANGILIK SAQLANDI!</b>",
             reply_markup=admin_keyboard(),
             parse_mode="HTML"
         )
@@ -2416,43 +3310,30 @@ async def admin_projects(
 
         return
 
-    text_parts = [
-        "📋 <b>SAQLANGAN LOYIHALAR</b>\n"
-    ]
+    current = ""
 
     for project_id, name, link in projects:
 
-        text_parts.append(
+        part = (
             f"🆔 ID: {project_id}\n"
             f"📌 {escape(str(name))}\n"
             f"🔗 {escape(str(link))}\n"
-            "━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━\n"
         )
 
-    # Juda katta xabar yuborilmasligi uchun
-    # 3500 belgidan bo'lib yuboramiz.
-    current = ""
+        if len(current) + len(part) > 3500:
 
-    for part in text_parts:
+            await message.answer(
+                current,
+                parse_mode="HTML"
+            )
 
-        if len(current) + len(part) + 2 > 3500:
+            current = ""
 
-            if current:
-                await message.answer(
-                    current,
-                    parse_mode="HTML"
-                )
-
-            current = part
-
-        else:
-
-            if current:
-                current += "\n\n"
-
-            current += part
+        current += part
 
     if current:
+
         await message.answer(
             current,
             parse_mode="HTML"
@@ -2523,8 +3404,6 @@ async def delete_projects_list(
 
     buttons = []
 
-    # Telegram callback keyboard juda katta bo'lib ketmasligi
-    # uchun dastlabki 80 ta loyiha chiqariladi.
     for project_id, name, link in projects[:80]:
 
         title = str(name)
@@ -2535,9 +3414,7 @@ async def delete_projects_list(
         buttons.append([
             InlineKeyboardButton(
                 text=f"🗑 {project_id} — {title}",
-                callback_data=(
-                    f"del_project_{project_id}"
-                )
+                callback_data=f"del_project_{project_id}"
             )
         ])
 
@@ -2547,13 +3424,6 @@ async def delete_projects_list(
             inline_keyboard=buttons
         )
     )
-
-    if len(projects) > 80:
-
-        await callback.message.answer(
-            "ℹ️ 80 tadan ortiq loyiha mavjud. "
-            "Keyingi versiyada sahifalash qo‘shish mumkin."
-        )
 
     await callback.answer()
 
@@ -2573,12 +3443,10 @@ async def delete_project_handler(
     if not is_admin(
         callback.from_user.id
     ):
-
         await callback.answer(
             "⛔ Ruxsat yo‘q.",
             show_alert=True
         )
-
         return
 
     try:
@@ -2596,7 +3464,6 @@ async def delete_project_handler(
             "❌ Xatolik.",
             show_alert=True
         )
-
         return
 
     deleted = await delete_project(
@@ -2636,12 +3503,10 @@ async def delete_news_list(
     if not is_admin(
         callback.from_user.id
     ):
-
         await callback.answer(
             "⛔ Ruxsat yo‘q.",
             show_alert=True
         )
-
         return
 
     news_list = await get_news()
@@ -2663,7 +3528,7 @@ async def delete_news_list(
         title = (
             str(text)[:30]
             if text
-            else "🖼 Rasmli yangilik"
+            else "Rasmli yangilik"
         )
 
         buttons.append([
@@ -2698,12 +3563,10 @@ async def delete_news_handler(
     if not is_admin(
         callback.from_user.id
     ):
-
         await callback.answer(
             "⛔ Ruxsat yo‘q.",
             show_alert=True
         )
-
         return
 
     try:
@@ -2721,7 +3584,6 @@ async def delete_news_handler(
             "❌ Xatolik.",
             show_alert=True
         )
-
         return
 
     deleted = await delete_news(
@@ -2761,12 +3623,6 @@ async def delete_back(
     if not is_admin(
         callback.from_user.id
     ):
-
-        await callback.answer(
-            "⛔ Ruxsat yo‘q.",
-            show_alert=True
-        )
-
         return
 
     admin_delete_waiting.discard(
@@ -2806,8 +3662,7 @@ async def broadcast_start(
 
     await message.answer(
         "📢 <b>OMMAVIY XABAR</b>\n\n"
-        "Barcha foydalanuvchilarga yubormoqchi "
-        "bo‘lgan xabaringizni yuboring.\n\n"
+        "Yubormoqchi bo‘lgan xabaringizni yuboring.\n\n"
         "📝 Matn\n"
         "🖼 Rasm\n"
         "🎥 Video\n"
@@ -2819,7 +3674,7 @@ async def broadcast_start(
 
 
 # =========================================================
-# BROADCAST BITTA FOYDALANUVCHI
+# BROADCAST USER
 # =========================================================
 
 
@@ -2863,15 +3718,10 @@ async def broadcast_to_user(
                 return "success"
 
             except TelegramForbiddenError:
+
                 return "blocked"
 
-            except Exception as retry_error:
-
-                logger.warning(
-                    "Broadcast retry xatosi %s: %s",
-                    target_user_id,
-                    retry_error
-                )
+            except Exception:
 
                 return "failed"
 
@@ -2892,13 +3742,7 @@ async def broadcast_to_user(
         except (
             TelegramNetworkError,
             TelegramServerError
-        ) as e:
-
-            logger.warning(
-                "Telegram vaqtinchalik xato %s: %s",
-                target_user_id,
-                e
-            )
+        ):
 
             await asyncio.sleep(1)
 
@@ -2913,9 +3757,11 @@ async def broadcast_to_user(
                 return "success"
 
             except TelegramForbiddenError:
+
                 return "blocked"
 
             except Exception:
+
                 return "failed"
 
         except Exception as e:
@@ -2963,9 +3809,7 @@ async def send_broadcast(
 
     await message.answer(
         "⏳ <b>Ommaviy xabar yuborilmoqda...</b>\n\n"
-        f"👥 Jami: {len(users)}\n\n"
-        "Bot boshqa foydalanuvchilar uchun "
-        "ishlashda davom etadi.",
+        f"👥 Jami: {len(users)}",
         parse_mode="HTML"
     )
 
@@ -3016,7 +3860,6 @@ async def send_broadcast(
 
             failed += 1
 
-    # Bloklaganlarni bitta DB transactionda o'chiramiz.
     if blocked_ids:
 
         await db_write(
@@ -3035,30 +3878,6 @@ async def send_broadcast(
     )
 
     return True
-
-
-def _delete_users_bulk(
-    user_ids
-):
-    if not user_ids:
-        return
-
-    conn = db_connect()
-
-    try:
-
-        conn.executemany(
-            "DELETE FROM users WHERE user_id = ?",
-            [
-                (user_id,)
-                for user_id in user_ids
-            ]
-        )
-
-        conn.commit()
-
-    finally:
-        conn.close()
 
 
 # =========================================================
@@ -3107,6 +3926,50 @@ async def close_admin(
 
 
 # =========================================================
+# YORDAM
+# =========================================================
+
+
+@dp.message(
+    F.text.in_({
+        "❓ Yordam",
+        "❓ Помощь"
+    })
+)
+async def help_handler(message: Message):
+
+    language = await get_language(
+        message.from_user.id
+    )
+
+    if language == "ru":
+
+        await message.answer(
+            "❓ <b>ПОМОЩЬ</b>\n\n"
+            "📌 Проекты — список проектов.\n"
+            "🏆 TOP — рейтинг проектов.\n"
+            "📊 Результаты — количество голосов.\n"
+            "📰 Новости — последние новости.\n\n"
+            "Для голосования выберите проект и "
+            "перейдите на официальную страницу.",
+            parse_mode="HTML"
+        )
+
+    else:
+
+        await message.answer(
+            "❓ <b>YORDAM</b>\n\n"
+            "📌 Loyihalar — loyihalar ro‘yxati.\n"
+            "🏆 TOP — loyihalar reytingi.\n"
+            "📊 Natijalar — ovozlar soni.\n"
+            "📰 Yangiliklar — so‘nggi yangiliklar.\n\n"
+            "Ovoz berish uchun loyihani tanlang va "
+            "rasmiy ovoz berish sahifasiga o‘ting.",
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
 # OTHER MESSAGES
 # =========================================================
 
@@ -3115,6 +3978,73 @@ async def close_admin(
 async def other_messages(
     message: Message
 ):
+
+    # Admin foydalanuvchi qidiruvi
+    search_key = f"user_search:{message.from_user.id}"
+
+    if (
+        is_admin(message.from_user.id)
+        and search_key in callback_locks
+    ):
+
+        callback_locks.pop(
+            search_key,
+            None
+        )
+
+        if message.text:
+
+            results = await search_user(
+                message.text.strip()
+            )
+
+            if not results:
+
+                await message.answer(
+                    "❌ Foydalanuvchi topilmadi.",
+                    reply_markup=admin_keyboard()
+                )
+
+                return
+
+            for row in results:
+
+                (
+                    user_id,
+                    username,
+                    first_name,
+                    language,
+                    phone,
+                    voted,
+                    created_at
+                ) = row
+
+                username_text = (
+                    f"@{username}"
+                    if username
+                    else "Username yo‘q"
+                )
+
+                phone_text = (
+                    phone
+                    if phone
+                    else "Telefon yo‘q"
+                )
+
+                await message.answer(
+                    "👤 <b>TOPILGAN FOYDALANUVCHI</b>\n\n"
+                    f"🆔 ID: <code>{user_id}</code>\n"
+                    f"👤 Ism: {escape(str(first_name or ''))}\n"
+                    f"🔹 Username: {escape(username_text)}\n"
+                    f"📱 Telefon: <code>{escape(str(phone_text))}</code>\n"
+                    f"🌐 Til: {escape(str(language or 'uz'))}\n"
+                    f"🗳 Ovoz: "
+                    f"{'✅ Ha' if voted else '⏳ Yo‘q'}\n"
+                    f"📅 Sana: {escape(str(created_at))}",
+                    parse_mode="HTML"
+                )
+
+            return
 
     # Admin savol javobi
     if await send_question_answer(message):
@@ -3171,11 +4101,6 @@ async def main():
     logger.info(
         "DATABASE: %s",
         DB_NAME
-    )
-
-    logger.info(
-        "BROADCAST CONCURRENCY: %s",
-        BROADCAST_CONCURRENCY
     )
 
     logger.info(
