@@ -32,10 +32,10 @@ from aiogram.exceptions import (
 # SOZLAMALAR
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
 
 ADMIN_IDS = set()
-admin_ids_text = os.getenv("ADMIN_IDS", "").strip()
+admin_ids_text = 7998053914
 
 if admin_ids_text:
     for item in admin_ids_text.replace(";", ",").split(","):
