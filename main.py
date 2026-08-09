@@ -1,3 +1,6 @@
+print("MAIN.PY ISHLAYAPTI", 
+flush=True)
+
 import asyncio
 import logging
 import os
