@@ -1,3 +1,7 @@
+# =========================================================
+# MAIN.PY - OPEN BUDGET BOT
+# =========================================================
+
 import asyncio
 import logging
 import os
@@ -31,7 +35,7 @@ from aiogram.exceptions import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# ADMIN ID'LAR
+# ADMIN ID LAR
 ADMIN_IDS = {
     7998053914,
 }
@@ -40,25 +44,12 @@ VOTE_REWARD = 30_000
 REFERRAL_REWARD = 5_000
 MIN_WITHDRAW = 20_000
 
-# =========================================================
-# DATABASE PATH
-# =========================================================
-#
-# Railway'da Volume /data ga ulangan bo'lsa,
-# bot.db /data ichida saqlanadi.
-#
-# Lokal ishlaganda esa loyiha papkasidagi bot.db ishlatiladi.
-# =========================================================
-
-if Path("/data").exists() and os.access("/data", os.W_OK):
-    DB_PATH = Path("/data/bot.db")
-else:
-    BASE_DIR = Path(__file__).resolve().parent
-    DB_PATH = BASE_DIR / "bot.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "bot.db"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
 logger = logging.getLogger(__name__)
@@ -97,15 +88,14 @@ TEXTS = {
 
         "statistics": "📊 Statistika",
         "add_project": "➕ Loyiha qo'shish",
-        "manage_projects": "🗂 Loyihalarni boshqarish",
-        "delete_project": "🗑 Loyihani o'chirish",
-        "restore_project": "♻️ Loyihani tiklash",
-
         "add_news": "📰 Yangilik qo'shish",
         "broadcast": "📢 Reklama tarqatish",
         "withdrawals": "💸 Yechishlar",
-        "admin_panel": "⚙️ Admin panel",
 
+        "delete_project": "🗑 Loyihani o'chirish",
+        "delete_news": "🗑 Yangilikni o'chirish",
+
+        "admin_panel": "⚙️ Admin panel",
         "back": "🔙 Orqaga",
         "cancel": "❌ Bekor qilish",
 
@@ -116,15 +106,14 @@ TEXTS = {
         "no_projects": "📌 Hozircha loyihalar mavjud emas.",
 
         "project_name": "📝 Loyiha nomini yuboring:",
-
         "project_link": (
             "🔗 Loyiha havolasini yuboring.\n\n"
             "Masalan:\n"
             "https://example.com"
         ),
-
-        "project_created": "✅ Loyiha qo'shildi va doimiy saqlandi!",
+        "project_created": "✅ Loyiha qo'shildi va saqlandi!",
         "invalid_link": "❌ Havola noto'g'ri.",
+
         "project_not_found": "❌ Loyiha topilmadi.",
         "open_project": "🔗 Loyihani ochish",
         "vote": "🗳 Ovoz berish",
@@ -143,8 +132,8 @@ TEXTS = {
         "vote_sent": (
             "✅ Telefon raqamingiz qabul qilindi.\n\n"
             "⏳ Ovoz berish so'rovingiz administratorga yuborildi.\n"
-            "Admin tasdiqlaganidan keyin "
-            "{reward} so'm balansingizga qo'shiladi."
+            "Admin tasdiqlaganidan keyin {reward} so'm "
+            "balansingizga qo'shiladi."
         ),
 
         "vote_already_pending": (
@@ -152,7 +141,9 @@ TEXTS = {
             "allaqachon ko'rib chiqilmoqda."
         ),
 
-        "already_voted": "⚠️ Siz bu loyihaga allaqachon ovoz bergansiz.",
+        "already_voted": (
+            "⚠️ Siz bu loyihaga allaqachon ovoz bergansiz."
+        ),
 
         "admin_only": "❌ Bu bo'lim faqat administrator uchun.",
 
@@ -186,8 +177,7 @@ TEXTS = {
         "news_saved": "✅ Yangilik saqlandi va foydalanuvchilarga yuborildi.",
 
         "send_broadcast": (
-            "📢 Barcha foydalanuvchilarga yuboriladigan "
-            "xabarni yuboring."
+            "📢 Barcha foydalanuvchilarga yuboriladigan xabarni yuboring."
         ),
 
         "broadcast_result": (
@@ -202,8 +192,7 @@ TEXTS = {
             "👥 Foydalanuvchilar: {users}\n"
             "🗳 Ovozlar: {votes}\n"
             "⏳ Kutilayotgan ovozlar: {pending_votes}\n"
-            "📌 Faol loyihalar: {projects}\n"
-            "🗂 Jami loyihalar: {all_projects}\n"
+            "📌 Loyihalar: {projects}\n"
             "👁 Ko'rishlar: {views}\n"
             "📰 Yangiliklar: {news}\n"
             "💰 Umumiy balans: {balance} so'm\n"
@@ -237,13 +226,26 @@ TEXTS = {
         ),
 
         "back_menu": "🔙 Asosiy menyuga qaytdingiz.",
+
+        "delete_project_confirm": (
+            "🗑 <b>Loyihani o'chirish</b>\n\n"
+            "Qaysi loyihani o'chirmoqchisiz?"
+        ),
+
+        "delete_project_done": "✅ Loyiha o'chirildi.",
+
+        "delete_news_confirm": (
+            "🗑 <b>Yangilikni o'chirish</b>\n\n"
+            "Qaysi yangilikni o'chirmoqchisiz?"
+        ),
+
+        "delete_news_done": "✅ Yangilik o'chirildi.",
     },
 
     "ru": {
         "welcome": (
             "Здравствуйте, {name}! 👋\n\n"
-            "🎁 За подтверждённый голос "
-            "{vote_reward} сум.\n"
+            "🎁 За подтверждённый голос {vote_reward} сум.\n"
             "👥 Реферальный бонус: {ref_reward} сум.\n\n"
             "Выберите раздел:"
         ),
@@ -259,15 +261,14 @@ TEXTS = {
 
         "statistics": "📊 Статистика",
         "add_project": "➕ Добавить проект",
-        "manage_projects": "🗂 Управление проектами",
-        "delete_project": "🗑 Удалить проект",
-        "restore_project": "♻️ Восстановить проект",
-
         "add_news": "📰 Добавить новость",
         "broadcast": "📢 Рассылка",
         "withdrawals": "💸 Заявки",
-        "admin_panel": "⚙️ Админ-панель",
 
+        "delete_project": "🗑 Удалить проект",
+        "delete_news": "🗑 Удалить новость",
+
+        "admin_panel": "⚙️ Админ-панель",
         "back": "🔙 Назад",
         "cancel": "❌ Отмена",
 
@@ -279,9 +280,9 @@ TEXTS = {
 
         "project_name": "📝 Отправьте название проекта:",
         "project_link": "🔗 Отправьте ссылку проекта:",
-
-        "project_created": "✅ Проект добавлен и сохранён.",
+        "project_created": "✅ Проект добавлен и сохранён!",
         "invalid_link": "❌ Неверная ссылка.",
+
         "project_not_found": "❌ Проект не найден.",
         "open_project": "🔗 Открыть проект",
         "vote": "🗳 Голосовать",
@@ -296,8 +297,7 @@ TEXTS = {
         "vote_sent": (
             "✅ Номер принят.\n\n"
             "⏳ Запрос отправлен администратору.\n"
-            "После подтверждения вам будет начислено "
-            "{reward} сум."
+            "После подтверждения вам будет начислено {reward} сум."
         ),
 
         "vote_already_pending": (
@@ -326,7 +326,10 @@ TEXTS = {
         "news_empty": "📰 Новостей пока нет.",
         "send_news": "📰 Отправьте новость.",
         "news_saved": "✅ Новость сохранена.",
-        "send_broadcast": "📢 Отправьте сообщение для рассылки.",
+
+        "send_broadcast": (
+            "📢 Отправьте сообщение для рассылки."
+        ),
 
         "broadcast_result": (
             "📢 Рассылка завершена.\n\n"
@@ -340,8 +343,7 @@ TEXTS = {
             "👥 Пользователи: {users}\n"
             "🗳 Голоса: {votes}\n"
             "⏳ Ожидающие голоса: {pending_votes}\n"
-            "📌 Активные проекты: {projects}\n"
-            "🗂 Всего проектов: {all_projects}\n"
+            "📌 Проекты: {projects}\n"
             "👁 Просмотры: {views}\n"
             "📰 Новости: {news}\n"
             "💰 Баланс: {balance} сум\n"
@@ -357,6 +359,7 @@ TEXTS = {
 
         "invalid_amount": "❌ Неверная сумма.",
         "not_enough": "❌ Недостаточно средств.",
+
         "withdraw_info": "💳 Отправьте реквизиты для выплаты.",
 
         "withdraw_created": (
@@ -367,7 +370,21 @@ TEXTS = {
 
         "no_pending_withdrawals": "⏳ Нет ожидающих заявок.",
         "back_menu": "🔙 Вы вернулись в главное меню.",
-    }
+
+        "delete_project_confirm": (
+            "🗑 <b>Удаление проекта</b>\n\n"
+            "Выберите проект:"
+        ),
+
+        "delete_project_done": "✅ Проект удалён.",
+
+        "delete_news_confirm": (
+            "🗑 <b>Удаление новости</b>\n\n"
+            "Выберите новость:"
+        ),
+
+        "delete_news_done": "✅ Новость удалена.",
+    },
 }
 
 
@@ -409,24 +426,11 @@ def db():
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
     return conn
-
-
-def column_exists(conn, table, column):
-    row = conn.execute(
-        f"PRAGMA table_info({table})"
-    ).fetchall()
-
-    return any(item["name"] == column for item in row)
 
 
 def init_db():
     with closing(db()) as conn:
-
-        # -------------------------------------------------
-        # USERS
-        # -------------------------------------------------
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users(
@@ -442,40 +446,16 @@ def init_db():
             )
         """)
 
-        # -------------------------------------------------
-        # PROJECTS
-        # -------------------------------------------------
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS projects(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name_uz TEXT,
+                name_uz TEXT NOT NULL,
                 name_ru TEXT,
                 url TEXT,
                 click_count INTEGER DEFAULT 0,
-                is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # Eski projects jadvali bo'lsa,
-        # is_active ustunini avtomatik qo'shamiz.
-        if not column_exists(conn, "projects", "is_active"):
-            conn.execute("""
-                ALTER TABLE projects
-                ADD COLUMN is_active INTEGER DEFAULT 1
-            """)
-
-        # Eski loyihalarni faol holatda qoldiramiz.
-        conn.execute("""
-            UPDATE projects
-            SET is_active=1
-            WHERE is_active IS NULL
-        """)
-
-        # -------------------------------------------------
-        # VOTES
-        # -------------------------------------------------
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS votes(
@@ -492,10 +472,6 @@ def init_db():
             )
         """)
 
-        # -------------------------------------------------
-        # NEWS
-        # -------------------------------------------------
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS news(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -505,10 +481,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # -------------------------------------------------
-        # REFERRALS
-        # -------------------------------------------------
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals(
@@ -521,10 +493,6 @@ def init_db():
             )
         """)
 
-        # -------------------------------------------------
-        # TRANSACTIONS
-        # -------------------------------------------------
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS transactions(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -535,10 +503,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # -------------------------------------------------
-        # WITHDRAWALS
-        # -------------------------------------------------
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS withdrawals(
@@ -551,10 +515,6 @@ def init_db():
             )
         """)
 
-        # -------------------------------------------------
-        # ADMIN MESSAGES
-        # -------------------------------------------------
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS admin_messages(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -564,10 +524,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # -------------------------------------------------
-        # INDEXLAR
-        # -------------------------------------------------
 
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_votes_user_project
@@ -582,11 +538,6 @@ def init_db():
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_admin_messages_msg
             ON admin_messages(message_id)
-        """)
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_projects_active
-            ON projects(is_active)
         """)
 
         conn.commit()
@@ -697,10 +648,13 @@ def admin_menu(language):
             ],
             [
                 KeyboardButton(text=t["add_project"]),
-                KeyboardButton(text=t["manage_projects"]),
+                KeyboardButton(text=t["add_news"]),
             ],
             [
-                KeyboardButton(text=t["add_news"]),
+                KeyboardButton(text=t["delete_project"]),
+                KeyboardButton(text=t["delete_news"]),
+            ],
+            [
                 KeyboardButton(text=t["broadcast"]),
             ],
             [
@@ -756,7 +710,7 @@ def language_menu():
 @dp.message(CommandStart())
 async def start_handler(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     await state.clear()
 
@@ -786,15 +740,13 @@ async def start_handler(
 # BACK
 # =========================================================
 
-@dp.message(
-    F.text.in_({
-        "🔙 Orqaga",
-        "🔙 Назад",
-    })
-)
+@dp.message(F.text.in_({
+    "🔙 Orqaga",
+    "🔙 Назад",
+}))
 async def back_handler(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     await state.clear()
 
@@ -815,12 +767,10 @@ async def back_handler(
 # LANGUAGE
 # =========================================================
 
-@dp.message(
-    F.text.in_({
-        "🌐 Til",
-        "🌐 Язык",
-    })
-)
+@dp.message(F.text.in_({
+    "🌐 Til",
+    "🌐 Язык",
+}))
 async def language_handler(message: Message):
     add_user(message)
 
@@ -872,12 +822,10 @@ async def ru_handler(message: Message):
 # PROJECTS
 # =========================================================
 
-@dp.message(
-    F.text.in_({
-        "📌 Loyihalar",
-        "📌 Проекты",
-    })
-)
+@dp.message(F.text.in_({
+    "📌 Loyihalar",
+    "📌 Проекты",
+}))
 async def projects_handler(message: Message):
     add_user(message)
 
@@ -887,12 +835,8 @@ async def projects_handler(message: Message):
     with closing(db()) as conn:
         rows = conn.execute(
             """
-            SELECT
-                id,
-                name_uz,
-                name_ru
+            SELECT id,name_uz,name_ru
             FROM projects
-            WHERE is_active=1
             ORDER BY id DESC
             """
         ).fetchall()
@@ -907,6 +851,7 @@ async def projects_handler(message: Message):
     buttons = []
 
     for row in rows:
+
         name = (
             row["name_uz"]
             if lang == "uz"
@@ -917,14 +862,17 @@ async def projects_handler(message: Message):
             name
             or row["name_uz"]
             or row["name_ru"]
+            or "Loyiha"
         )
 
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📌 {name}",
-                callback_data=f"project:{row['id']}",
-            )
-        ])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"📌 {name}",
+                    callback_data=f"project:{row['id']}",
+                )
+            ]
+        )
 
     await message.answer(
         t["select_project"],
@@ -938,30 +886,27 @@ async def projects_handler(message: Message):
 # PROJECT OPEN
 # =========================================================
 
-@dp.callback_query(
-    F.data.startswith("project:")
-)
+@dp.callback_query(F.data.startswith("project:"))
 async def project_handler(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
-    project_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        project_id = int(
+            callback.data.split(":")[1]
+        )
+    except Exception:
+        await callback.answer(
+            "❌ Xatolik.",
+            show_alert=True,
+        )
+        return
 
-    lang = get_lang(
-        callback.from_user.id
-    )
-
+    lang = get_lang(callback.from_user.id)
     t = TEXTS[lang]
 
     with closing(db()) as conn:
         row = conn.execute(
-            """
-            SELECT *
-            FROM projects
-            WHERE id=?
-              AND is_active=1
-            """,
+            "SELECT * FROM projects WHERE id=?",
             (project_id,),
         ).fetchone()
 
@@ -969,13 +914,11 @@ async def project_handler(
             conn.execute(
                 """
                 UPDATE projects
-                SET click_count=
-                    COALESCE(click_count,0)+1
+                SET click_count=COALESCE(click_count,0)+1
                 WHERE id=?
                 """,
                 (project_id,),
             )
-
             conn.commit()
 
     if not row:
@@ -995,24 +938,29 @@ async def project_handler(
         name
         or row["name_uz"]
         or row["name_ru"]
+        or "Loyiha"
     )
 
     buttons = []
 
     if row["url"]:
-        buttons.append([
-            InlineKeyboardButton(
-                text=t["open_project"],
-                url=row["url"],
-            )
-        ])
-
-    buttons.append([
-        InlineKeyboardButton(
-            text=t["vote"],
-            callback_data=f"vote:{project_id}",
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=t["open_project"],
+                    url=row["url"],
+                )
+            ]
         )
-    ])
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=t["vote"],
+                callback_data=f"vote:{project_id}",
+            )
+        ]
+    )
 
     await callback.message.answer(
         f"📌 <b>{escape(name)}</b>",
@@ -1026,35 +974,31 @@ async def project_handler(
 
 
 # =========================================================
-# VOTE START
+# VOTE
 # =========================================================
 
-@dp.callback_query(
-    F.data.startswith("vote:")
-)
+@dp.callback_query(F.data.startswith("vote:"))
 async def vote_start(
     callback: CallbackQuery,
-    state: FSMContext
+    state: FSMContext,
 ):
-    project_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        project_id = int(
+            callback.data.split(":")[1]
+        )
+    except Exception:
+        await callback.answer(
+            "❌ Xatolik.",
+            show_alert=True,
+        )
+        return
 
-    lang = get_lang(
-        callback.from_user.id
-    )
-
+    lang = get_lang(callback.from_user.id)
     t = TEXTS[lang]
 
     with closing(db()) as conn:
-
         project = conn.execute(
-            """
-            SELECT id
-            FROM projects
-            WHERE id=?
-              AND is_active=1
-            """,
+            "SELECT id FROM projects WHERE id=?",
             (project_id,),
         ).fetchone()
 
@@ -1062,8 +1006,7 @@ async def vote_start(
             """
             SELECT id,status
             FROM votes
-            WHERE user_id=?
-              AND project_id=?
+            WHERE user_id=? AND project_id=?
             """,
             (
                 callback.from_user.id,
@@ -1108,10 +1051,6 @@ async def vote_start(
     await callback.answer()
 
 
-# =========================================================
-# PHONE
-# =========================================================
-
 def normalize_phone(text):
     value = re.sub(
         r"[\s\-]",
@@ -1145,12 +1084,9 @@ def normalize_phone(text):
 @dp.message(VoteStates.phone)
 async def vote_phone_handler(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
-    lang = get_lang(
-        message.from_user.id
-    )
-
+    lang = get_lang(message.from_user.id)
     t = TEXTS[lang]
 
     phone = normalize_phone(
@@ -1165,9 +1101,7 @@ async def vote_phone_handler(
 
     data = await state.get_data()
 
-    project_id = data.get(
-        "project_id"
-    )
+    project_id = data.get("project_id")
 
     if not project_id:
         await state.clear()
@@ -1179,8 +1113,7 @@ async def vote_phone_handler(
             """
             SELECT id,status
             FROM votes
-            WHERE user_id=?
-              AND project_id=?
+            WHERE user_id=? AND project_id=?
             """,
             (
                 message.from_user.id,
@@ -1211,13 +1144,7 @@ async def vote_phone_handler(
                 reward,
                 status
             )
-            VALUES(
-                ?,
-                ?,
-                ?,
-                ?,
-                'pending'
-            )
+            VALUES(?,?,?,?, 'pending')
             """,
             (
                 message.from_user.id,
@@ -1306,18 +1233,14 @@ async def vote_phone_handler(
 
 
 # =========================================================
-# APPROVE VOTE
+# VOTE APPROVE
 # =========================================================
 
-@dp.callback_query(
-    F.data.startswith("vote_ok:")
-)
+@dp.callback_query(F.data.startswith("vote_ok:"))
 async def vote_approve(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "Faqat admin.",
             show_alert=True,
@@ -1329,16 +1252,11 @@ async def vote_approve(
     )
 
     with closing(db()) as conn:
-
         conn.execute("BEGIN IMMEDIATE")
 
         vote = conn.execute(
             """
-            SELECT
-                user_id,
-                project_id,
-                reward,
-                status
+            SELECT user_id,project_id,reward,status
             FROM votes
             WHERE id=?
             """,
@@ -1361,8 +1279,7 @@ async def vote_approve(
         conn.execute(
             """
             UPDATE votes
-            SET
-                status='approved',
+            SET status='approved',
                 admin_id=?,
                 approved_at=CURRENT_TIMESTAMP
             WHERE id=?
@@ -1377,11 +1294,8 @@ async def vote_approve(
         conn.execute(
             """
             UPDATE users
-            SET
-                balance=
-                    COALESCE(balance,0)+?,
-                total_earned=
-                    COALESCE(total_earned,0)+?
+            SET balance=COALESCE(balance,0)+?,
+                total_earned=COALESCE(total_earned,0)+?
             WHERE user_id=?
             """,
             (
@@ -1399,12 +1313,7 @@ async def vote_approve(
                 type,
                 description
             )
-            VALUES(
-                ?,
-                ?,
-                'vote',
-                ?
-            )
+            VALUES(?,?, 'vote',?)
             """,
             (
                 vote["user_id"],
@@ -1443,24 +1352,18 @@ async def vote_approve(
         f"💰 +{money(vote['reward'])} so'm"
     )
 
-    await callback.answer(
-        "Tasdiqlandi."
-    )
+    await callback.answer("Tasdiqlandi.")
 
 
 # =========================================================
-# REJECT VOTE
+# VOTE REJECT
 # =========================================================
 
-@dp.callback_query(
-    F.data.startswith("vote_no:")
-)
+@dp.callback_query(F.data.startswith("vote_no:"))
 async def vote_reject(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "Faqat admin.",
             show_alert=True,
@@ -1475,9 +1378,7 @@ async def vote_reject(
 
         vote = conn.execute(
             """
-            SELECT
-                user_id,
-                status
+            SELECT user_id,status
             FROM votes
             WHERE id=?
             """,
@@ -1497,8 +1398,7 @@ async def vote_reject(
         conn.execute(
             """
             UPDATE votes
-            SET
-                status='rejected',
+            SET status='rejected',
                 admin_id=?
             WHERE id=?
               AND status='pending'
@@ -1534,25 +1434,19 @@ async def vote_reject(
         f"❌ Ovoz #{vote_id} rad etildi."
     )
 
-    await callback.answer(
-        "Rad etildi."
-    )
+    await callback.answer("Rad etildi.")
 
 
 # =========================================================
 # ADMIN <-> USER CHAT
 # =========================================================
 
-@dp.callback_query(
-    F.data.startswith("admin_reply:")
-)
+@dp.callback_query(F.data.startswith("admin_reply:"))
 async def admin_reply_start(
     callback: CallbackQuery,
-    state: FSMContext
+    state: FSMContext,
 ):
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "Faqat admin.",
             show_alert=True,
@@ -1585,7 +1479,7 @@ async def admin_reply_start(
 
 async def send_copied_admin_message(
     message,
-    user_id
+    user_id,
 ):
     if message.text:
         return await bot.send_message(
@@ -1633,16 +1527,12 @@ async def send_copied_admin_message(
     return None
 
 
-@dp.message(
-    AdminReplyStates.waiting_message
-)
+@dp.message(AdminReplyStates.waiting_message)
 async def admin_reply_send(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
-    if not is_admin(
-        message.from_user.id
-    ):
+    if not is_admin(message.from_user.id):
         await state.clear()
         return
 
@@ -1662,6 +1552,7 @@ async def admin_reply_send(
         return
 
     try:
+
         sent = await send_copied_admin_message(
             message,
             user_id,
@@ -1689,7 +1580,6 @@ async def admin_reply_send(
                     sent.message_id,
                 ),
             )
-
             conn.commit()
 
         await state.clear()
@@ -1720,7 +1610,7 @@ async def admin_reply_send(
 
 @dp.message(F.reply_to_message)
 async def user_reply_to_admin(
-    message: Message
+    message: Message,
 ):
     if not message.from_user:
         return
@@ -1732,9 +1622,7 @@ async def user_reply_to_admin(
     with closing(db()) as conn:
         row = conn.execute(
             """
-            SELECT
-                admin_id,
-                user_id
+            SELECT admin_id,user_id
             FROM admin_messages
             WHERE message_id=?
               AND user_id=?
@@ -1759,13 +1647,13 @@ async def user_reply_to_admin(
     header = (
         "📩 <b>FOYDALANUVCHIDAN JAVOB</b>\n\n"
         f"👤 {escape(username)}\n"
-        f"🆔 User ID: "
-        f"<code>{message.from_user.id}</code>\n\n"
+        f"🆔 User ID: <code>{message.from_user.id}</code>\n\n"
     )
 
     try:
 
         if message.text:
+
             await bot.send_message(
                 row["admin_id"],
                 header
@@ -1775,6 +1663,7 @@ async def user_reply_to_admin(
             )
 
         elif message.photo:
+
             await bot.send_photo(
                 row["admin_id"],
                 message.photo[-1].file_id,
@@ -1786,6 +1675,7 @@ async def user_reply_to_admin(
             )
 
         elif message.video:
+
             await bot.send_video(
                 row["admin_id"],
                 message.video.file_id,
@@ -1797,6 +1687,7 @@ async def user_reply_to_admin(
             )
 
         elif message.document:
+
             await bot.send_document(
                 row["admin_id"],
                 message.document.file_id,
@@ -1808,6 +1699,7 @@ async def user_reply_to_admin(
             )
 
         else:
+
             await bot.send_message(
                 row["admin_id"],
                 header
@@ -1834,27 +1726,76 @@ async def user_reply_to_admin(
 # BALANCE
 # =========================================================
 
-@dp.message(
-    F.text.in_({
-        "💰 Balans",
-        "💰 Баланс",
-    })
-)
-async def balance_handler(
-    message: Message
-):
+@dp.message(F.text.in_({
+    "💰 Balans",
+    "💰 Баланс",
+}))
+async def balance_handler(message: Message):
     add_user(message)
 
-    lang = get_lang(
-        message.from_user.id
-    )
+    lang = get_lang(message.from_user.id)
 
     with closing(db()) as conn:
         row = conn.execute(
             """
-            SELECT
-                balance,
-                total_earned,
-                total_withdrawn
+            SELECT balance,total_earned,total_withdrawn
             FROM users
             WHERE user_id=?
+            """,
+            (message.from_user.id,),
+        ).fetchone()
+
+    await message.answer(
+        TEXTS[lang]["balance_text"].format(
+            balance=money(row["balance"]),
+            earned=money(row["total_earned"]),
+            withdrawn=money(row["total_withdrawn"]),
+        ),
+        parse_mode="HTML",
+        reply_markup=user_menu(lang),
+    )
+
+
+# =========================================================
+# REFERRAL
+# =========================================================
+
+@dp.message(F.text.in_({
+    "🔗 Referal ssilka",
+    "🔗 Реферальная ссылка",
+}))
+async def referral_handler(message: Message):
+    add_user(message)
+
+    lang = get_lang(message.from_user.id)
+
+    me = await bot.get_me()
+
+    link = (
+        f"https://t.me/{me.username}"
+        f"?start=ref_{message.from_user.id}"
+    )
+
+    with closing(db()) as conn:
+
+        count = conn.execute(
+            """
+            SELECT COUNT(*) c
+            FROM referrals
+            WHERE referrer_id=?
+            """,
+            (message.from_user.id,),
+        ).fetchone()["c"]
+
+        earned = conn.execute(
+            """
+            SELECT COALESCE(SUM(bonus),0) s
+            FROM referrals
+            WHERE referrer_id=?
+              AND status='rewarded'
+            """,
+            (message.from_user.id,),
+        ).fetchone()["s"]
+
+    await message.answer(
+        TEXTS[lang]["
