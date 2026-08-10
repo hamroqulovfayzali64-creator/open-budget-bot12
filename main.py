@@ -1,7 +1,3 @@
-# =========================================================
-# MAIN.PY - OPEN BUDGET BOT
-# =========================================================
-
 import asyncio
 import logging
 import os
@@ -24,10 +20,8 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.exceptions import (
-    TelegramForbiddenError,
-    TelegramRetryAfter,
-)
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+
 
 # =========================================================
 # SOZLAMALAR
@@ -35,21 +29,20 @@ from aiogram.exceptions import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# ADMIN ID LAR
 ADMIN_IDS = {
     7998053914,
 }
 
 VOTE_REWARD = 30_000
 REFERRAL_REWARD = 5_000
-MIN_WITHDRAW = 20_000
+MIN_WITHDRAW = 30_000
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bot.db"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
 logger = logging.getLogger(__name__)
@@ -71,8 +64,7 @@ TEXTS = {
     "uz": {
         "welcome": (
             "Assalomu alaykum, {name}! 👋\n\n"
-            "🎁 Har bir tasdiqlangan ovoz uchun "
-            "{vote_reward} so'm hisobingizga qo'shiladi.\n"
+            "🎁 Har bir tasdiqlangan ovoz uchun {vote_reward} so'm.\n"
             "👥 Referal bonus: {ref_reward} so'm.\n\n"
             "Kerakli bo'limni tanlang:"
         ),
@@ -91,9 +83,7 @@ TEXTS = {
         "add_news": "📰 Yangilik qo'shish",
         "broadcast": "📢 Reklama tarqatish",
         "withdrawals": "💸 Yechishlar",
-
-        "delete_project": "🗑 Loyihani o'chirish",
-        "delete_news": "🗑 Yangilikni o'chirish",
+        "manage": "🗑 Kontent boshqaruvi",
 
         "admin_panel": "⚙️ Admin panel",
         "back": "🔙 Orqaga",
@@ -108,12 +98,10 @@ TEXTS = {
         "project_name": "📝 Loyiha nomini yuboring:",
         "project_link": (
             "🔗 Loyiha havolasini yuboring.\n\n"
-            "Masalan:\n"
-            "https://example.com"
+            "Masalan:\nhttps://example.com"
         ),
         "project_created": "✅ Loyiha qo'shildi va saqlandi!",
         "invalid_link": "❌ Havola noto'g'ri.",
-
         "project_not_found": "❌ Loyiha topilmadi.",
         "open_project": "🔗 Loyihani ochish",
         "vote": "🗳 Ovoz berish",
@@ -126,14 +114,13 @@ TEXTS = {
 
         "invalid_phone": (
             "❌ Telefon raqami noto'g'ri.\n\n"
-            "Masalan: +998991234567 yoki 991234567"
+            "Masalan: +998991234567"
         ),
 
         "vote_sent": (
             "✅ Telefon raqamingiz qabul qilindi.\n\n"
             "⏳ Ovoz berish so'rovingiz administratorga yuborildi.\n"
-            "Admin tasdiqlaganidan keyin {reward} so'm "
-            "balansingizga qo'shiladi."
+            "Admin tasdiqlaganidan keyin {reward} so'm balansingizga qo'shiladi."
         ),
 
         "vote_already_pending": (
@@ -141,10 +128,7 @@ TEXTS = {
             "allaqachon ko'rib chiqilmoqda."
         ),
 
-        "already_voted": (
-            "⚠️ Siz bu loyihaga allaqachon ovoz bergansiz."
-        ),
-
+        "already_voted": "⚠️ Siz bu loyihaga allaqachon ovoz bergansiz.",
         "admin_only": "❌ Bu bo'lim faqat administrator uchun.",
 
         "help_text": (
@@ -177,7 +161,8 @@ TEXTS = {
         "news_saved": "✅ Yangilik saqlandi va foydalanuvchilarga yuborildi.",
 
         "send_broadcast": (
-            "📢 Barcha foydalanuvchilarga yuboriladigan xabarni yuboring."
+            "📢 Barcha foydalanuvchilarga yuboriladigan "
+            "xabarni yuboring."
         ),
 
         "broadcast_result": (
@@ -208,38 +193,27 @@ TEXTS = {
 
         "invalid_amount": "❌ Summani to'g'ri kiriting.",
         "not_enough": "❌ Balansingiz yetarli emas.",
-
-        "withdraw_info": (
-            "💳 To'lov rekvizitingizni yuboring.\n\n"
-            "Masalan: telefon raqami yoki wallet ID."
-        ),
-
+        "withdraw_info": "💳 To'lov rekvizitingizni yuboring.",
         "withdraw_created": (
             "✅ Pul yechish so'rovi yuborildi.\n\n"
             "💰 Summa: {amount} so'm\n"
-            "🆔 So'rov: #{request_id}\n\n"
-            "Admin tekshiradi."
-        ),
-
-        "no_pending_withdrawals": (
-            "⏳ Kutilayotgan pul yechish so'rovlari yo'q."
+            "🆔 So'rov: #{request_id}"
         ),
 
         "back_menu": "🔙 Asosiy menyuga qaytdingiz.",
 
-        "delete_project_confirm": (
-            "🗑 <b>Loyihani o'chirish</b>\n\n"
-            "Qaysi loyihani o'chirmoqchisiz?"
-        ),
+        "manage_text": "🗑 O'chirish uchun bo'limni tanlang:",
+        "manage_projects": "🗑 Loyihalarni boshqarish",
+        "manage_news": "🗑 Yangiliklarni boshqarish",
 
-        "delete_project_done": "✅ Loyiha o'chirildi.",
+        "no_projects_delete": "📌 O'chirish uchun loyiha yo'q.",
+        "no_news_delete": "📰 O'chirish uchun yangilik yo'q.",
 
-        "delete_news_confirm": (
-            "🗑 <b>Yangilikni o'chirish</b>\n\n"
-            "Qaysi yangilikni o'chirmoqchisiz?"
-        ),
-
-        "delete_news_done": "✅ Yangilik o'chirildi.",
+        "project_deleted": "✅ Loyiha o'chirildi.",
+        "news_deleted": "✅ Yangilik o'chirildi.",
+        "delete_confirm": "⚠️ Haqiqatan ham o'chirmoqchimisiz?",
+        "delete_yes": "✅ Ha, o'chirish",
+        "delete_no": "❌ Yo'q",
     },
 
     "ru": {
@@ -264,9 +238,7 @@ TEXTS = {
         "add_news": "📰 Добавить новость",
         "broadcast": "📢 Рассылка",
         "withdrawals": "💸 Заявки",
-
-        "delete_project": "🗑 Удалить проект",
-        "delete_news": "🗑 Удалить новость",
+        "manage": "🗑 Управление",
 
         "admin_panel": "⚙️ Админ-панель",
         "back": "🔙 Назад",
@@ -282,7 +254,6 @@ TEXTS = {
         "project_link": "🔗 Отправьте ссылку проекта:",
         "project_created": "✅ Проект добавлен и сохранён!",
         "invalid_link": "❌ Неверная ссылка.",
-
         "project_not_found": "❌ Проект не найден.",
         "open_project": "🔗 Открыть проект",
         "vote": "🗳 Голосовать",
@@ -300,10 +271,7 @@ TEXTS = {
             "После подтверждения вам будет начислено {reward} сум."
         ),
 
-        "vote_already_pending": (
-            "⏳ Ваш запрос уже находится на рассмотрении."
-        ),
-
+        "vote_already_pending": "⏳ Ваш запрос уже находится на рассмотрении.",
         "already_voted": "⚠️ Вы уже голосовали за этот проект.",
         "admin_only": "❌ Только для администратора.",
 
@@ -327,9 +295,7 @@ TEXTS = {
         "send_news": "📰 Отправьте новость.",
         "news_saved": "✅ Новость сохранена.",
 
-        "send_broadcast": (
-            "📢 Отправьте сообщение для рассылки."
-        ),
+        "send_broadcast": "📢 Отправьте сообщение для рассылки.",
 
         "broadcast_result": (
             "📢 Рассылка завершена.\n\n"
@@ -359,7 +325,6 @@ TEXTS = {
 
         "invalid_amount": "❌ Неверная сумма.",
         "not_enough": "❌ Недостаточно средств.",
-
         "withdraw_info": "💳 Отправьте реквизиты для выплаты.",
 
         "withdraw_created": (
@@ -368,23 +333,22 @@ TEXTS = {
             "🆔 #{request_id}"
         ),
 
-        "no_pending_withdrawals": "⏳ Нет ожидающих заявок.",
         "back_menu": "🔙 Вы вернулись в главное меню.",
 
-        "delete_project_confirm": (
-            "🗑 <b>Удаление проекта</b>\n\n"
-            "Выберите проект:"
-        ),
+        "manage_text": "🗑 Выберите раздел:",
+        "manage_projects": "🗑 Управление проектами",
+        "manage_news": "🗑 Управление новостями",
 
-        "delete_project_done": "✅ Проект удалён.",
+        "no_projects_delete": "📌 Нет проектов для удаления.",
+        "no_news_delete": "📰 Нет новостей для удаления.",
 
-        "delete_news_confirm": (
-            "🗑 <b>Удаление новости</b>\n\n"
-            "Выберите новость:"
-        ),
+        "project_deleted": "✅ Проект удалён.",
+        "news_deleted": "✅ Новость удалена.",
 
-        "delete_news_done": "✅ Новость удалена.",
-    },
+        "delete_confirm": "⚠️ Вы действительно хотите удалить?",
+        "delete_yes": "✅ Да, удалить",
+        "delete_no": "❌ Нет",
+    }
 }
 
 
@@ -449,7 +413,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS projects(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name_uz TEXT NOT NULL,
+                name_uz TEXT,
                 name_ru TEXT,
                 url TEXT,
                 click_count INTEGER DEFAULT 0,
@@ -542,7 +506,7 @@ def init_db():
 
         conn.commit()
 
-    logger.info("DATABASE TAYYOR: %s", DB_PATH)
+    logger.info("DATABASE TAYYOR")
 
 
 # =========================================================
@@ -562,25 +526,19 @@ def add_user(message):
         return
 
     with closing(db()) as conn:
-        conn.execute(
-            """
-            INSERT INTO users(
-                user_id,
-                username,
-                first_name
-            )
+        conn.execute("""
+            INSERT INTO users(user_id, username, first_name)
             VALUES(?,?,?)
             ON CONFLICT(user_id)
             DO UPDATE SET
                 username=excluded.username,
                 first_name=excluded.first_name
-            """,
-            (
-                message.from_user.id,
-                message.from_user.username,
-                message.from_user.first_name,
-            ),
-        )
+        """, (
+            message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name
+        ))
+
         conn.commit()
 
 
@@ -588,7 +546,7 @@ def get_lang(user_id):
     with closing(db()) as conn:
         row = conn.execute(
             "SELECT language FROM users WHERE user_id=?",
-            (user_id,),
+            (user_id,)
         ).fetchone()
 
     if row and row["language"] in ("uz", "ru"):
@@ -601,7 +559,7 @@ def set_lang(user_id, language):
     with closing(db()) as conn:
         conn.execute(
             "UPDATE users SET language=? WHERE user_id=?",
-            (language, user_id),
+            (language, user_id)
         )
         conn.commit()
 
@@ -617,24 +575,24 @@ def user_menu(language):
         keyboard=[
             [
                 KeyboardButton(text=t["projects"]),
-                KeyboardButton(text=t["news"]),
+                KeyboardButton(text=t["news"])
             ],
             [
                 KeyboardButton(text=t["balance"]),
-                KeyboardButton(text=t["referral"]),
+                KeyboardButton(text=t["referral"])
             ],
             [
                 KeyboardButton(text=t["withdraw"]),
-                KeyboardButton(text=t["help"]),
+                KeyboardButton(text=t["help"])
             ],
             [
-                KeyboardButton(text=t["language"]),
+                KeyboardButton(text=t["language"])
             ],
             [
-                KeyboardButton(text=t["group_add"]),
-            ],
+                KeyboardButton(text=t["group_add"])
+            ]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
@@ -644,27 +602,26 @@ def admin_menu(language):
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text=t["statistics"]),
+                KeyboardButton(text=t["statistics"])
             ],
             [
                 KeyboardButton(text=t["add_project"]),
-                KeyboardButton(text=t["add_news"]),
+                KeyboardButton(text=t["add_news"])
             ],
             [
-                KeyboardButton(text=t["delete_project"]),
-                KeyboardButton(text=t["delete_news"]),
+                KeyboardButton(text=t["manage"])
             ],
             [
-                KeyboardButton(text=t["broadcast"]),
+                KeyboardButton(text=t["broadcast"])
             ],
             [
-                KeyboardButton(text=t["withdrawals"]),
+                KeyboardButton(text=t["withdrawals"])
             ],
             [
-                KeyboardButton(text=t["back"]),
-            ],
+                KeyboardButton(text=t["back"])
+            ]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
@@ -678,13 +635,9 @@ def main_menu(user_id, language):
 def cancel_menu(language):
     return ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(
-                    text=TEXTS[language]["cancel"]
-                )
-            ]
+            [KeyboardButton(text=TEXTS[language]["cancel"])]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
@@ -693,13 +646,13 @@ def language_menu():
         keyboard=[
             [
                 KeyboardButton(text="🇺🇿 O‘zbek"),
-                KeyboardButton(text="🇷🇺 Русский"),
+                KeyboardButton(text="🇷🇺 Русский")
             ],
             [
-                KeyboardButton(text="🔙 Orqaga"),
-            ],
+                KeyboardButton(text="🔙 Orqaga")
+            ]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
@@ -708,31 +661,22 @@ def language_menu():
 # =========================================================
 
 @dp.message(CommandStart())
-async def start_handler(
-    message: Message,
-    state: FSMContext,
-):
-    await state.clear()
+async def start_handler(message: Message, state: FSMContext):
 
+    await state.clear()
     add_user(message)
 
     lang = get_lang(message.from_user.id)
 
-    name = (
-        message.from_user.first_name
-        or "Foydalanuvchi"
-    )
+    name = message.from_user.first_name or "Foydalanuvchi"
 
     await message.answer(
         TEXTS[lang]["welcome"].format(
             name=escape(name),
             vote_reward=money(VOTE_REWARD),
-            ref_reward=money(REFERRAL_REWARD),
+            ref_reward=money(REFERRAL_REWARD)
         ),
-        reply_markup=main_menu(
-            message.from_user.id,
-            lang,
-        ),
+        reply_markup=main_menu(message.from_user.id, lang)
     )
 
 
@@ -740,26 +684,17 @@ async def start_handler(
 # BACK
 # =========================================================
 
-@dp.message(F.text.in_({
-    "🔙 Orqaga",
-    "🔙 Назад",
-}))
-async def back_handler(
-    message: Message,
-    state: FSMContext,
-):
-    await state.clear()
+@dp.message(F.text.in_({"🔙 Orqaga", "🔙 Назад"}))
+async def back_handler(message: Message, state: FSMContext):
 
+    await state.clear()
     add_user(message)
 
     lang = get_lang(message.from_user.id)
 
     await message.answer(
         TEXTS[lang]["back_menu"],
-        reply_markup=main_menu(
-            message.from_user.id,
-            lang,
-        ),
+        reply_markup=main_menu(message.from_user.id, lang)
     )
 
 
@@ -767,54 +702,40 @@ async def back_handler(
 # LANGUAGE
 # =========================================================
 
-@dp.message(F.text.in_({
-    "🌐 Til",
-    "🌐 Язык",
-}))
+@dp.message(F.text.in_({"🌐 Til", "🌐 Язык"}))
 async def language_handler(message: Message):
+
     add_user(message)
 
     lang = get_lang(message.from_user.id)
 
     await message.answer(
         TEXTS[lang]["select_language"],
-        reply_markup=language_menu(),
+        reply_markup=language_menu()
     )
 
 
 @dp.message(F.text == "🇺🇿 O‘zbek")
 async def uz_handler(message: Message):
-    add_user(message)
 
-    set_lang(
-        message.from_user.id,
-        "uz",
-    )
+    add_user(message)
+    set_lang(message.from_user.id, "uz")
 
     await message.answer(
         TEXTS["uz"]["language_saved"],
-        reply_markup=main_menu(
-            message.from_user.id,
-            "uz",
-        ),
+        reply_markup=main_menu(message.from_user.id, "uz")
     )
 
 
 @dp.message(F.text == "🇷🇺 Русский")
 async def ru_handler(message: Message):
-    add_user(message)
 
-    set_lang(
-        message.from_user.id,
-        "ru",
-    )
+    add_user(message)
+    set_lang(message.from_user.id, "ru")
 
     await message.answer(
         TEXTS["ru"]["language_saved"],
-        reply_markup=main_menu(
-            message.from_user.id,
-            "ru",
-        ),
+        reply_markup=main_menu(message.from_user.id, "ru")
     )
 
 
@@ -822,29 +743,25 @@ async def ru_handler(message: Message):
 # PROJECTS
 # =========================================================
 
-@dp.message(F.text.in_({
-    "📌 Loyihalar",
-    "📌 Проекты",
-}))
+@dp.message(F.text.in_({"📌 Loyihalar", "📌 Проекты"}))
 async def projects_handler(message: Message):
+
     add_user(message)
 
     lang = get_lang(message.from_user.id)
     t = TEXTS[lang]
 
     with closing(db()) as conn:
-        rows = conn.execute(
-            """
-            SELECT id,name_uz,name_ru
+        rows = conn.execute("""
+            SELECT id, name_uz, name_ru
             FROM projects
             ORDER BY id DESC
-            """
-        ).fetchall()
+        """).fetchall()
 
     if not rows:
         await message.answer(
             t["no_projects"],
-            reply_markup=user_menu(lang),
+            reply_markup=user_menu(lang)
         )
         return
 
@@ -852,122 +769,83 @@ async def projects_handler(message: Message):
 
     for row in rows:
 
-        name = (
-            row["name_uz"]
-            if lang == "uz"
-            else row["name_ru"]
-        )
+        name = row["name_uz"] if lang == "uz" else row["name_ru"]
 
-        name = (
-            name
-            or row["name_uz"]
-            or row["name_ru"]
-            or "Loyiha"
-        )
+        name = name or row["name_uz"] or row["name_ru"]
 
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=f"📌 {name}",
-                    callback_data=f"project:{row['id']}",
-                )
-            ]
-        )
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📌 {name}",
+                callback_data=f"project:{row['id']}"
+            )
+        ])
 
     await message.answer(
         t["select_project"],
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=buttons
-        ),
+        )
     )
 
 
-# =========================================================
-# PROJECT OPEN
-# =========================================================
-
 @dp.callback_query(F.data.startswith("project:"))
-async def project_handler(
-    callback: CallbackQuery,
-):
-    try:
-        project_id = int(
-            callback.data.split(":")[1]
-        )
-    except Exception:
-        await callback.answer(
-            "❌ Xatolik.",
-            show_alert=True,
-        )
-        return
+async def project_handler(callback: CallbackQuery):
+
+    project_id = int(callback.data.split(":")[1])
 
     lang = get_lang(callback.from_user.id)
     t = TEXTS[lang]
 
     with closing(db()) as conn:
+
         row = conn.execute(
             "SELECT * FROM projects WHERE id=?",
-            (project_id,),
+            (project_id,)
         ).fetchone()
 
         if row:
-            conn.execute(
-                """
+            conn.execute("""
                 UPDATE projects
                 SET click_count=COALESCE(click_count,0)+1
                 WHERE id=?
-                """,
-                (project_id,),
-            )
+            """, (project_id,))
+
             conn.commit()
 
     if not row:
         await callback.answer(
             t["project_not_found"],
-            show_alert=True,
+            show_alert=True
         )
         return
 
-    name = (
-        row["name_uz"]
-        if lang == "uz"
-        else row["name_ru"]
-    )
+    name = row["name_uz"] if lang == "uz" else row["name_ru"]
 
-    name = (
-        name
-        or row["name_uz"]
-        or row["name_ru"]
-        or "Loyiha"
-    )
+    name = name or row["name_uz"] or row["name_ru"]
 
     buttons = []
 
     if row["url"]:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=t["open_project"],
-                    url=row["url"],
-                )
-            ]
-        )
-
-    buttons.append(
-        [
+        buttons.append([
             InlineKeyboardButton(
-                text=t["vote"],
-                callback_data=f"vote:{project_id}",
+                text=t["open_project"],
+                url=row["url"]
             )
-        ]
-    )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            text=t["vote"],
+            callback_data=f"vote:{project_id}"
+        )
+    ])
 
     await callback.message.answer(
         f"📌 <b>{escape(name)}</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=buttons
-        ),
+        )
     )
 
     await callback.answer()
@@ -980,56 +858,48 @@ async def project_handler(
 @dp.callback_query(F.data.startswith("vote:"))
 async def vote_start(
     callback: CallbackQuery,
-    state: FSMContext,
+    state: FSMContext
 ):
-    try:
-        project_id = int(
-            callback.data.split(":")[1]
-        )
-    except Exception:
-        await callback.answer(
-            "❌ Xatolik.",
-            show_alert=True,
-        )
-        return
+
+    project_id = int(callback.data.split(":")[1])
 
     lang = get_lang(callback.from_user.id)
     t = TEXTS[lang]
 
     with closing(db()) as conn:
+
         project = conn.execute(
             "SELECT id FROM projects WHERE id=?",
-            (project_id,),
+            (project_id,)
         ).fetchone()
 
-        vote = conn.execute(
-            """
-            SELECT id,status
+        vote = conn.execute("""
+            SELECT id, status
             FROM votes
             WHERE user_id=? AND project_id=?
-            """,
-            (
-                callback.from_user.id,
-                project_id,
-            ),
-        ).fetchone()
+        """, (
+            callback.from_user.id,
+            project_id
+        )).fetchone()
 
     if not project:
+
         await callback.answer(
             t["project_not_found"],
-            show_alert=True,
+            show_alert=True
         )
+
         return
 
     if vote:
+
         await callback.answer(
-            (
-                t["vote_already_pending"]
-                if vote["status"] == "pending"
-                else t["already_voted"]
-            ),
-            show_alert=True,
+            t["vote_already_pending"]
+            if vote["status"] == "pending"
+            else t["already_voted"],
+            show_alert=True
         )
+
         return
 
     await state.clear()
@@ -1045,17 +915,18 @@ async def vote_start(
     await callback.message.answer(
         t["vote_phone"],
         parse_mode="HTML",
-        reply_markup=cancel_menu(lang),
+        reply_markup=cancel_menu(lang)
     )
 
     await callback.answer()
 
 
 def normalize_phone(text):
+
     value = re.sub(
-        r"[\s\-]",
+        r"[\s\-\(\)]",
         "",
-        text.strip(),
+        text.strip()
     )
 
     if (
@@ -1084,8 +955,9 @@ def normalize_phone(text):
 @dp.message(VoteStates.phone)
 async def vote_phone_handler(
     message: Message,
-    state: FSMContext,
+    state: FSMContext
 ):
+
     lang = get_lang(message.from_user.id)
     t = TEXTS[lang]
 
@@ -1094,9 +966,11 @@ async def vote_phone_handler(
     )
 
     if not phone:
+
         await message.answer(
             t["invalid_phone"]
         )
+
         return
 
     data = await state.get_data()
@@ -1104,39 +978,36 @@ async def vote_phone_handler(
     project_id = data.get("project_id")
 
     if not project_id:
+
         await state.clear()
+
         return
 
     with closing(db()) as conn:
 
-        existing = conn.execute(
-            """
-            SELECT id,status
+        existing = conn.execute("""
+            SELECT id, status
             FROM votes
             WHERE user_id=? AND project_id=?
-            """,
-            (
-                message.from_user.id,
-                project_id,
-            ),
-        ).fetchone()
+        """, (
+            message.from_user.id,
+            project_id
+        )).fetchone()
 
         if existing:
+
             await state.clear()
 
             await message.answer(
-                (
-                    t["vote_already_pending"]
-                    if existing["status"] == "pending"
-                    else t["already_voted"]
-                ),
-                reply_markup=user_menu(lang),
+                t["vote_already_pending"]
+                if existing["status"] == "pending"
+                else t["already_voted"],
+                reply_markup=user_menu(lang)
             )
 
             return
 
-        cur = conn.execute(
-            """
+        cur = conn.execute("""
             INSERT INTO votes(
                 user_id,
                 project_id,
@@ -1145,28 +1016,23 @@ async def vote_phone_handler(
                 status
             )
             VALUES(?,?,?,?, 'pending')
-            """,
-            (
-                message.from_user.id,
-                project_id,
-                phone,
-                VOTE_REWARD,
-            ),
-        )
+        """, (
+            message.from_user.id,
+            project_id,
+            phone,
+            VOTE_REWARD
+        ))
 
         vote_id = cur.lastrowid
 
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE users
             SET phone=?
             WHERE user_id=?
-            """,
-            (
-                phone,
-                message.from_user.id,
-            ),
-        )
+        """, (
+            phone,
+            message.from_user.id
+        ))
 
         conn.commit()
 
@@ -1176,7 +1042,7 @@ async def vote_phone_handler(
         t["vote_sent"].format(
             reward=money(VOTE_REWARD)
         ),
-        reply_markup=user_menu(lang),
+        reply_markup=user_menu(lang)
     )
 
     username = (
@@ -1192,8 +1058,7 @@ async def vote_phone_handler(
         f"🆔 User ID: <code>{message.from_user.id}</code>\n"
         f"📞 Telefon: <code>{escape(phone)}</code>\n"
         f"📌 Loyiha ID: <b>{project_id}</b>\n"
-        f"💰 Mukofot: <b>{money(VOTE_REWARD)} so'm</b>\n\n"
-        "Foydalanuvchi telefon raqamini yubordi."
+        f"💰 Mukofot: <b>{money(VOTE_REWARD)} so'm</b>"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -1201,50 +1066,55 @@ async def vote_phone_handler(
             [
                 InlineKeyboardButton(
                     text="✅ TASDIQLASH",
-                    callback_data=f"vote_ok:{vote_id}",
+                    callback_data=f"vote_ok:{vote_id}"
                 ),
                 InlineKeyboardButton(
                     text="❌ RAD ETISH",
-                    callback_data=f"vote_no:{vote_id}",
-                ),
+                    callback_data=f"vote_no:{vote_id}"
+                )
             ],
             [
                 InlineKeyboardButton(
                     text="💬 JAVOB YOZISH",
-                    callback_data=f"admin_reply:{message.from_user.id}",
+                    callback_data=f"admin_reply:{message.from_user.id}"
                 )
-            ],
+            ]
         ]
     )
 
     for admin_id in ADMIN_IDS:
+
         try:
+
             await bot.send_message(
                 admin_id,
                 admin_text,
                 parse_mode="HTML",
-                reply_markup=keyboard,
+                reply_markup=keyboard
             )
+
         except Exception as e:
+
             logger.error(
                 "Admin xabari yuborilmadi: %s",
-                e,
+                e
             )
 
 
 # =========================================================
-# VOTE APPROVE
+# APPROVE VOTE
 # =========================================================
 
 @dp.callback_query(F.data.startswith("vote_ok:"))
-async def vote_approve(
-    callback: CallbackQuery,
-):
+async def vote_approve(callback: CallbackQuery):
+
     if not is_admin(callback.from_user.id):
+
         await callback.answer(
             "Faqat admin.",
-            show_alert=True,
+            show_alert=True
         )
+
         return
 
     vote_id = int(
@@ -1252,61 +1122,51 @@ async def vote_approve(
     )
 
     with closing(db()) as conn:
+
         conn.execute("BEGIN IMMEDIATE")
 
-        vote = conn.execute(
-            """
-            SELECT user_id,project_id,reward,status
+        vote = conn.execute("""
+            SELECT user_id, project_id, reward, status
             FROM votes
             WHERE id=?
-            """,
-            (vote_id,),
-        ).fetchone()
+        """, (vote_id,)).fetchone()
 
-        if (
-            not vote
-            or vote["status"] != "pending"
-        ):
+        if not vote or vote["status"] != "pending":
+
             conn.rollback()
 
             await callback.answer(
                 "So'rov allaqachon ko'rib chiqilgan.",
-                show_alert=True,
+                show_alert=True
             )
 
             return
 
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE votes
-            SET status='approved',
+            SET
+                status='approved',
                 admin_id=?,
                 approved_at=CURRENT_TIMESTAMP
-            WHERE id=?
-              AND status='pending'
-            """,
-            (
-                callback.from_user.id,
-                vote_id,
-            ),
-        )
+            WHERE id=? AND status='pending'
+        """, (
+            callback.from_user.id,
+            vote_id
+        ))
 
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE users
-            SET balance=COALESCE(balance,0)+?,
+            SET
+                balance=COALESCE(balance,0)+?,
                 total_earned=COALESCE(total_earned,0)+?
             WHERE user_id=?
-            """,
-            (
-                vote["reward"],
-                vote["reward"],
-                vote["user_id"],
-            ),
-        )
+        """, (
+            vote["reward"],
+            vote["reward"],
+            vote["user_id"]
+        ))
 
-        conn.execute(
-            """
+        conn.execute("""
             INSERT INTO transactions(
                 user_id,
                 amount,
@@ -1314,30 +1174,31 @@ async def vote_approve(
                 description
             )
             VALUES(?,?, 'vote',?)
-            """,
-            (
-                vote["user_id"],
-                vote["reward"],
-                f"Ovoz tasdiqlandi #{vote_id}",
-            ),
-        )
+        """, (
+            vote["user_id"],
+            vote["reward"],
+            f"Ovoz tasdiqlandi #{vote_id}"
+        ))
 
         conn.commit()
 
     try:
+
         await bot.send_message(
             vote["user_id"],
             (
                 "🎉 <b>Ovozingiz tasdiqlandi!</b>\n\n"
-                f"💰 Balansingizga "
-                f"<b>{money(vote['reward'])} so'm</b> qo'shildi."
+                f"💰 Balansingizga <b>{money(vote['reward'])} "
+                "so'm</b> qo'shildi."
             ),
-            parse_mode="HTML",
+            parse_mode="HTML"
         )
+
     except Exception as e:
+
         logger.warning(
             "User notification error: %s",
-            e,
+            e
         )
 
     try:
@@ -1356,18 +1217,19 @@ async def vote_approve(
 
 
 # =========================================================
-# VOTE REJECT
+# REJECT VOTE
 # =========================================================
 
 @dp.callback_query(F.data.startswith("vote_no:"))
-async def vote_reject(
-    callback: CallbackQuery,
-):
+async def vote_reject(callback: CallbackQuery):
+
     if not is_admin(callback.from_user.id):
+
         await callback.answer(
             "Faqat admin.",
-            show_alert=True,
+            show_alert=True
         )
+
         return
 
     vote_id = int(
@@ -1376,50 +1238,42 @@ async def vote_reject(
 
     with closing(db()) as conn:
 
-        vote = conn.execute(
-            """
-            SELECT user_id,status
+        vote = conn.execute("""
+            SELECT user_id, status
             FROM votes
             WHERE id=?
-            """,
-            (vote_id,),
-        ).fetchone()
+        """, (vote_id,)).fetchone()
 
-        if (
-            not vote
-            or vote["status"] != "pending"
-        ):
+        if not vote or vote["status"] != "pending":
+
             await callback.answer(
                 "So'rov allaqachon ko'rib chiqilgan.",
-                show_alert=True,
+                show_alert=True
             )
+
             return
 
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE votes
-            SET status='rejected',
+            SET
+                status='rejected',
                 admin_id=?
-            WHERE id=?
-              AND status='pending'
-            """,
-            (
-                callback.from_user.id,
-                vote_id,
-            ),
-        )
+            WHERE id=? AND status='pending'
+        """, (
+            callback.from_user.id,
+            vote_id
+        ))
 
         conn.commit()
 
     try:
+
         await bot.send_message(
             vote["user_id"],
-            (
-                "❌ <b>Ovoz so'rovingiz rad etildi.</b>\n\n"
-                "Balansingizga pul qo'shilmadi."
-            ),
-            parse_mode="HTML",
+            "❌ <b>Ovoz so'rovingiz rad etildi.</b>",
+            parse_mode="HTML"
         )
+
     except Exception:
         pass
 
@@ -1434,23 +1288,28 @@ async def vote_reject(
         f"❌ Ovoz #{vote_id} rad etildi."
     )
 
-    await callback.answer("Rad etildi.")
+    await callback.answer(
+        "Rad etildi."
+    )
 
 
 # =========================================================
-# ADMIN <-> USER CHAT
+# ADMIN -> USER
 # =========================================================
 
 @dp.callback_query(F.data.startswith("admin_reply:"))
 async def admin_reply_start(
     callback: CallbackQuery,
-    state: FSMContext,
+    state: FSMContext
 ):
+
     if not is_admin(callback.from_user.id):
+
         await callback.answer(
             "Faqat admin.",
-            show_alert=True,
+            show_alert=True
         )
+
         return
 
     user_id = int(
@@ -1471,7 +1330,7 @@ async def admin_reply_start(
         "💬 <b>Foydalanuvchiga javob yozing.</b>\n\n"
         "Siz yuborgan xabar shu foydalanuvchiga yuboriladi.\n"
         "❌ Bekor qilish: /cancel",
-        parse_mode="HTML",
+        parse_mode="HTML"
     )
 
     await callback.answer()
@@ -1479,19 +1338,22 @@ async def admin_reply_start(
 
 async def send_copied_admin_message(
     message,
-    user_id,
+    user_id
 ):
+
     if message.text:
+
         return await bot.send_message(
             user_id,
             (
                 "💬 <b>Admin sizga javob berdi:</b>\n\n"
                 f"{escape(message.text)}"
             ),
-            parse_mode="HTML",
+            parse_mode="HTML"
         )
 
     if message.photo:
+
         return await bot.send_photo(
             user_id,
             message.photo[-1].file_id,
@@ -1499,10 +1361,11 @@ async def send_copied_admin_message(
                 "💬 <b>Admin sizga javob berdi:</b>\n\n"
                 f"{escape(message.caption or '')}"
             ),
-            parse_mode="HTML",
+            parse_mode="HTML"
         )
 
     if message.video:
+
         return await bot.send_video(
             user_id,
             message.video.file_id,
@@ -1510,10 +1373,11 @@ async def send_copied_admin_message(
                 "💬 <b>Admin sizga javob berdi:</b>\n\n"
                 f"{escape(message.caption or '')}"
             ),
-            parse_mode="HTML",
+            parse_mode="HTML"
         )
 
     if message.document:
+
         return await bot.send_document(
             user_id,
             message.document.file_id,
@@ -1521,7 +1385,7 @@ async def send_copied_admin_message(
                 "💬 <b>Admin sizga javob berdi:</b>\n\n"
                 f"{escape(message.caption or '')}"
             ),
-            parse_mode="HTML",
+            parse_mode="HTML"
         )
 
     return None
@@ -1530,19 +1394,21 @@ async def send_copied_admin_message(
 @dp.message(AdminReplyStates.waiting_message)
 async def admin_reply_send(
     message: Message,
-    state: FSMContext,
+    state: FSMContext
 ):
+
     if not is_admin(message.from_user.id):
+
         await state.clear()
+
         return
 
     data = await state.get_data()
 
-    user_id = data.get(
-        "reply_user_id"
-    )
+    user_id = data.get("reply_user_id")
 
     if not user_id:
+
         await state.clear()
 
         await message.answer(
@@ -1555,31 +1421,32 @@ async def admin_reply_send(
 
         sent = await send_copied_admin_message(
             message,
-            user_id,
+            user_id
         )
 
         if not sent:
+
             await message.answer(
                 "❌ Matn, rasm, video yoki fayl yuboring."
             )
+
             return
 
         with closing(db()) as conn:
-            conn.execute(
-                """
+
+            conn.execute("""
                 INSERT INTO admin_messages(
                     admin_id,
                     user_id,
                     message_id
                 )
                 VALUES(?,?,?)
-                """,
-                (
-                    message.from_user.id,
-                    user_id,
-                    sent.message_id,
-                ),
-            )
+            """, (
+                message.from_user.id,
+                user_id,
+                sent.message_id
+            ))
+
             conn.commit()
 
         await state.clear()
@@ -1589,6 +1456,7 @@ async def admin_reply_send(
         )
 
     except TelegramForbiddenError:
+
         await state.clear()
 
         await message.answer(
@@ -1596,9 +1464,10 @@ async def admin_reply_send(
         )
 
     except Exception as e:
+
         logger.error(
             "Admin reply error: %s",
-            e,
+            e
         )
 
         await state.clear()
@@ -1608,10 +1477,13 @@ async def admin_reply_send(
         )
 
 
+# =========================================================
+# USER -> ADMIN REPLY
+# =========================================================
+
 @dp.message(F.reply_to_message)
-async def user_reply_to_admin(
-    message: Message,
-):
+async def user_reply_to_admin(message: Message):
+
     if not message.from_user:
         return
 
@@ -1620,20 +1492,18 @@ async def user_reply_to_admin(
     )
 
     with closing(db()) as conn:
-        row = conn.execute(
-            """
-            SELECT admin_id,user_id
+
+        row = conn.execute("""
+            SELECT admin_id, user_id
             FROM admin_messages
             WHERE message_id=?
               AND user_id=?
             ORDER BY id DESC
             LIMIT 1
-            """,
-            (
-                replied_id,
-                message.from_user.id,
-            ),
-        ).fetchone()
+        """, (
+            replied_id,
+            message.from_user.id
+        )).fetchone()
 
     if not row:
         return
@@ -1656,10 +1526,10 @@ async def user_reply_to_admin(
 
             await bot.send_message(
                 row["admin_id"],
-                header
-                + "💬 <b>Xabar:</b>\n\n"
-                + escape(message.text),
-                parse_mode="HTML",
+                header +
+                "💬 <b>Xabar:</b>\n\n" +
+                escape(message.text),
+                parse_mode="HTML"
             )
 
         elif message.photo:
@@ -1667,11 +1537,8 @@ async def user_reply_to_admin(
             await bot.send_photo(
                 row["admin_id"],
                 message.photo[-1].file_id,
-                caption=(
-                    header
-                    + "💬 Foydalanuvchi rasm yubordi."
-                ),
-                parse_mode="HTML",
+                caption=header + "💬 Foydalanuvchi rasm yubordi.",
+                parse_mode="HTML"
             )
 
         elif message.video:
@@ -1679,11 +1546,8 @@ async def user_reply_to_admin(
             await bot.send_video(
                 row["admin_id"],
                 message.video.file_id,
-                caption=(
-                    header
-                    + "💬 Foydalanuvchi video yubordi."
-                ),
-                parse_mode="HTML",
+                caption=header + "💬 Foydalanuvchi video yubordi.",
+                parse_mode="HTML"
             )
 
         elif message.document:
@@ -1691,20 +1555,16 @@ async def user_reply_to_admin(
             await bot.send_document(
                 row["admin_id"],
                 message.document.file_id,
-                caption=(
-                    header
-                    + "💬 Foydalanuvchi fayl yubordi."
-                ),
-                parse_mode="HTML",
+                caption=header + "💬 Foydalanuvchi fayl yubordi.",
+                parse_mode="HTML"
             )
 
         else:
 
             await bot.send_message(
                 row["admin_id"],
-                header
-                + "💬 Foydalanuvchi xabar yubordi.",
-                parse_mode="HTML",
+                header + "💬 Foydalanuvchi xabar yubordi.",
+                parse_mode="HTML"
             )
 
         await message.answer(
@@ -1712,9 +1572,10 @@ async def user_reply_to_admin(
         )
 
     except Exception as e:
+
         logger.error(
             "User reply error: %s",
-            e,
+            e
         )
 
         await message.answer(
@@ -1726,33 +1587,33 @@ async def user_reply_to_admin(
 # BALANCE
 # =========================================================
 
-@dp.message(F.text.in_({
-    "💰 Balans",
-    "💰 Баланс",
-}))
+@dp.message(F.text.in_({"💰 Balans", "💰 Баланс"}))
 async def balance_handler(message: Message):
+
     add_user(message)
 
     lang = get_lang(message.from_user.id)
 
     with closing(db()) as conn:
-        row = conn.execute(
-            """
-            SELECT balance,total_earned,total_withdrawn
+
+        row = conn.execute("""
+            SELECT balance,
+                   total_earned,
+                   total_withdrawn
             FROM users
             WHERE user_id=?
-            """,
-            (message.from_user.id,),
-        ).fetchone()
+        """, (
+            message.from_user.id,
+        )).fetchone()
 
     await message.answer(
         TEXTS[lang]["balance_text"].format(
             balance=money(row["balance"]),
             earned=money(row["total_earned"]),
-            withdrawn=money(row["total_withdrawn"]),
+            withdrawn=money(row["total_withdrawn"])
         ),
         parse_mode="HTML",
-        reply_markup=user_menu(lang),
+        reply_markup=user_menu(lang)
     )
 
 
@@ -1762,9 +1623,10 @@ async def balance_handler(message: Message):
 
 @dp.message(F.text.in_({
     "🔗 Referal ssilka",
-    "🔗 Реферальная ссылка",
+    "🔗 Реферальная ссылка"
 }))
 async def referral_handler(message: Message):
+
     add_user(message)
 
     lang = get_lang(message.from_user.id)
@@ -1778,24 +1640,1386 @@ async def referral_handler(message: Message):
 
     with closing(db()) as conn:
 
-        count = conn.execute(
-            """
+        count = conn.execute("""
             SELECT COUNT(*) c
             FROM referrals
             WHERE referrer_id=?
-            """,
-            (message.from_user.id,),
-        ).fetchone()["c"]
+        """, (
+            message.from_user.id,
+        )).fetchone()["c"]
 
-        earned = conn.execute(
-            """
+        earned = conn.execute("""
             SELECT COALESCE(SUM(bonus),0) s
             FROM referrals
             WHERE referrer_id=?
               AND status='rewarded'
-            """,
-            (message.from_user.id,),
-        ).fetchone()["s"]
+        """, (
+            message.from_user.id,
+        )).fetchone()["s"]
 
     await message.answer(
-        TEXTS[lang]["
+        TEXTS[lang]["referral_text"].format(
+            link=escape(link),
+            count=count,
+            earned=money(earned)
+        ),
+        parse_mode="HTML",
+        reply_markup=user_menu(lang)
+    )
+
+
+# =========================================================
+# NEWS USER
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📰 Yangiliklar",
+    "📰 Новости"
+}))
+async def news_handler(message: Message):
+
+    add_user(message)
+
+    lang = get_lang(message.from_user.id)
+
+    with closing(db()) as conn:
+
+        rows = conn.execute("""
+            SELECT chat_id, message_id
+            FROM news
+            ORDER BY id DESC
+            LIMIT 10
+        """).fetchall()
+
+    if not rows:
+
+        await message.answer(
+            TEXTS[lang]["news_empty"],
+            reply_markup=user_menu(lang)
+        )
+
+        return
+
+    for row in rows:
+
+        try:
+
+            await bot.copy_message(
+                chat_id=message.chat.id,
+                from_chat_id=row["chat_id"],
+                message_id=row["message_id"]
+            )
+
+        except Exception as e:
+
+            logger.warning(
+                "News copy error: %s",
+                e
+            )
+
+
+# =========================================================
+# ADMIN
+# =========================================================
+
+@dp.message(Command("admin"))
+async def admin_handler(message: Message):
+
+    add_user(message)
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    await message.answer(
+        TEXTS[lang]["admin_panel"],
+        reply_markup=admin_menu(lang)
+    )
+
+
+# =========================================================
+# ADD PROJECT
+# =========================================================
+
+@dp.message(F.text.in_({
+    "➕ Loyiha qo'shish",
+    "➕ Loyiha qo‘shish",
+    "➕ Добавить проект"
+}))
+async def project_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    await state.clear()
+
+    await state.set_state(
+        ProjectStates.name
+    )
+
+    await message.answer(
+        TEXTS[lang]["project_name"],
+        reply_markup=cancel_menu(lang)
+    )
+
+
+@dp.message(ProjectStates.name)
+async def project_name(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    name = (
+        message.text or ""
+    ).strip()
+
+    if len(name) < 2:
+
+        await message.answer(
+            "❌ Loyiha nomi juda qisqa."
+        )
+
+        return
+
+    await state.update_data(
+        name=name
+    )
+
+    await state.set_state(
+        ProjectStates.link
+    )
+
+    await message.answer(
+        TEXTS[get_lang(message.from_user.id)]["project_link"]
+    )
+
+
+@dp.message(ProjectStates.link)
+async def project_link(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    url = (
+        message.text or ""
+    ).strip()
+
+    parsed = urlparse(url)
+
+    lang = get_lang(message.from_user.id)
+
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+    ):
+
+        await message.answer(
+            TEXTS[lang]["invalid_link"]
+        )
+
+        return
+
+    data = await state.get_data()
+
+    with closing(db()) as conn:
+
+        conn.execute("""
+            INSERT INTO projects(
+                name_uz,
+                name_ru,
+                url
+            )
+            VALUES(?,?,?)
+        """, (
+            data["name"],
+            data["name"],
+            url
+        ))
+
+        conn.commit()
+
+    await state.clear()
+
+    await message.answer(
+        TEXTS[lang]["project_created"],
+        reply_markup=admin_menu(lang)
+    )
+
+
+# =========================================================
+# ADD NEWS
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📰 Yangilik qo'shish",
+    "📰 Yangilik qo‘shish",
+    "📰 Добавить новость"
+}))
+async def news_add_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    await state.clear()
+
+    await state.set_state(
+        NewsStates.content
+    )
+
+    await message.answer(
+        TEXTS[lang]["send_news"],
+        reply_markup=cancel_menu(lang)
+    )
+
+
+# =========================================================
+# BROADCAST
+# =========================================================
+
+async def broadcast(
+    chat_id,
+    message_id
+):
+
+    success = 0
+    blocked = 0
+    failed = 0
+
+    with closing(db()) as conn:
+
+        users = conn.execute(
+            "SELECT user_id FROM users"
+        ).fetchall()
+
+    for row in users:
+
+        try:
+
+            await bot.copy_message(
+                row["user_id"],
+                chat_id,
+                message_id
+            )
+
+            success += 1
+
+            await asyncio.sleep(0.04)
+
+        except TelegramForbiddenError:
+
+            blocked += 1
+
+            with closing(db()) as conn:
+
+                conn.execute(
+                    "DELETE FROM users WHERE user_id=?",
+                    (row["user_id"],)
+                )
+
+                conn.commit()
+
+        except TelegramRetryAfter as e:
+
+            await asyncio.sleep(
+                e.retry_after
+            )
+
+            try:
+
+                await bot.copy_message(
+                    row["user_id"],
+                    chat_id,
+                    message_id
+                )
+
+                success += 1
+
+            except Exception:
+
+                failed += 1
+
+        except Exception:
+
+            failed += 1
+
+    return success, blocked, failed
+
+
+# =========================================================
+# SAVE NEWS
+# =========================================================
+
+@dp.message(NewsStates.content)
+async def news_add(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        return
+
+    with closing(db()) as conn:
+
+        conn.execute("""
+            INSERT INTO news(
+                chat_id,
+                message_id,
+                text
+            )
+            VALUES(?,?,?)
+        """, (
+            message.chat.id,
+            message.message_id,
+            message.text or message.caption or ""
+        ))
+
+        conn.commit()
+
+    await broadcast(
+        message.chat.id,
+        message.message_id
+    )
+
+    await state.clear()
+
+    lang = get_lang(message.from_user.id)
+
+    await message.answer(
+        TEXTS[lang]["news_saved"],
+        reply_markup=admin_menu(lang)
+    )
+
+
+# =========================================================
+# BROADCAST START
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📢 Reklama tarqatish",
+    "📢 Рассылка"
+}))
+async def broadcast_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    await state.clear()
+
+    await state.set_state(
+        BroadcastStates.content
+    )
+
+    await message.answer(
+        TEXTS[lang]["send_broadcast"],
+        reply_markup=cancel_menu(lang)
+    )
+
+
+@dp.message(BroadcastStates.content)
+async def broadcast_handler(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        return
+
+    success, blocked, failed = await broadcast(
+        message.chat.id,
+        message.message_id
+    )
+
+    await state.clear()
+
+    lang = get_lang(message.from_user.id)
+
+    await message.answer(
+        TEXTS[lang]["broadcast_result"].format(
+            success=success,
+            blocked=blocked,
+            failed=failed
+        ),
+        reply_markup=admin_menu(lang)
+    )
+
+
+# =========================================================
+# CONTENT MANAGEMENT
+# =========================================================
+
+@dp.message(F.text.in_({
+    "🗑 Kontent boshqaruvi",
+    "🗑 Управление"
+}))
+async def manage_content(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+    t = TEXTS[lang]
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t["manage_projects"],
+                    callback_data="manage_projects"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t["manage_news"],
+                    callback_data="manage_news"
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        t["manage_text"],
+        reply_markup=keyboard
+    )
+
+
+# =========================================================
+# MANAGE PROJECTS
+# =========================================================
+
+@dp.callback_query(F.data == "manage_projects")
+async def manage_projects(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    lang = get_lang(callback.from_user.id)
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        rows = conn.execute("""
+            SELECT id, name_uz, name_ru, url
+            FROM projects
+            ORDER BY id DESC
+        """).fetchall()
+
+    if not rows:
+
+        await callback.message.answer(
+            t["no_projects_delete"]
+        )
+
+        await callback.answer()
+
+        return
+
+    buttons = []
+
+    for row in rows:
+
+        name = (
+            row["name_uz"]
+            or row["name_ru"]
+            or f"Loyiha #{row['id']}"
+        )
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🗑 {name}",
+                callback_data=f"delete_project:{row['id']}"
+            )
+        ])
+
+    await callback.message.answer(
+        "📌 O'chirmoqchi bo'lgan loyihani tanlang:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# DELETE PROJECT CONFIRM
+# =========================================================
+
+@dp.callback_query(F.data.startswith("delete_project:"))
+async def delete_project_confirm(
+    callback: CallbackQuery
+):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    project_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(callback.from_user.id)
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT id, name_uz, name_ru
+            FROM projects
+            WHERE id=?
+        """, (
+            project_id,
+        )).fetchone()
+
+    if not row:
+
+        await callback.answer(
+            t["project_not_found"],
+            show_alert=True
+        )
+
+        return
+
+    name = (
+        row["name_uz"]
+        or row["name_ru"]
+        or f"#{project_id}"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t["delete_yes"],
+                    callback_data=f"project_delete_yes:{project_id}"
+                ),
+                InlineKeyboardButton(
+                    text=t["delete_no"],
+                    callback_data="delete_cancel"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.answer(
+        f"{t['delete_confirm']}\n\n📌 <b>{escape(name)}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# DELETE PROJECT
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("project_delete_yes:")
+)
+async def delete_project(
+    callback: CallbackQuery
+):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    project_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(callback.from_user.id)
+
+    with closing(db()) as conn:
+
+        row = conn.execute(
+            "SELECT id FROM projects WHERE id=?",
+            (project_id,)
+        ).fetchone()
+
+        if not row:
+
+            await callback.answer(
+                "Loyiha topilmadi.",
+                show_alert=True
+            )
+
+            return
+
+        conn.execute(
+            "DELETE FROM projects WHERE id=?",
+            (project_id,)
+        )
+
+        conn.commit()
+
+    await callback.message.edit_reply_markup(
+        reply_markup=None
+    )
+
+    await callback.message.answer(
+        TEXTS[lang]["project_deleted"]
+    )
+
+    await callback.answer(
+        "O'chirildi."
+    )
+
+
+# =========================================================
+# MANAGE NEWS
+# =========================================================
+
+@dp.callback_query(F.data == "manage_news")
+async def manage_news(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    lang = get_lang(callback.from_user.id)
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        rows = conn.execute("""
+            SELECT id, text, created_at
+            FROM news
+            ORDER BY id DESC
+            LIMIT 30
+        """).fetchall()
+
+    if not rows:
+
+        await callback.message.answer(
+            t["no_news_delete"]
+        )
+
+        await callback.answer()
+
+        return
+
+    buttons = []
+
+    for row in rows:
+
+        title = (
+            row["text"]
+            or f"Yangilik #{row['id']}"
+        )
+
+        title = title.replace(
+            "\n",
+            " "
+        )
+
+        if len(title) > 35:
+            title = title[:35] + "..."
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🗑 {title}",
+                callback_data=f"delete_news:{row['id']}"
+            )
+        ])
+
+    await callback.message.answer(
+        "📰 O'chirmoqchi bo'lgan yangilikni tanlang:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# DELETE NEWS CONFIRM
+# =========================================================
+
+@dp.callback_query(F.data.startswith("delete_news:"))
+async def delete_news_confirm(
+    callback: CallbackQuery
+):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    news_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(callback.from_user.id)
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT id, text
+            FROM news
+            WHERE id=?
+        """, (
+            news_id,
+        )).fetchone()
+
+    if not row:
+
+        await callback.answer(
+            "Yangilik topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    title = (
+        row["text"]
+        or f"#{news_id}"
+    )
+
+    if len(title) > 100:
+        title = title[:100] + "..."
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t["delete_yes"],
+                    callback_data=f"news_delete_yes:{news_id}"
+                ),
+                InlineKeyboardButton(
+                    text=t["delete_no"],
+                    callback_data="delete_cancel"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.answer(
+        f"{t['delete_confirm']}\n\n"
+        f"📰 <b>{escape(title)}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# DELETE NEWS
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("news_delete_yes:")
+)
+async def delete_news(
+    callback: CallbackQuery
+):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    news_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(callback.from_user.id)
+
+    with closing(db()) as conn:
+
+        row = conn.execute(
+            "SELECT id FROM news WHERE id=?",
+            (news_id,)
+        ).fetchone()
+
+        if not row:
+
+            await callback.answer(
+                "Yangilik topilmadi.",
+                show_alert=True
+            )
+
+            return
+
+        conn.execute(
+            "DELETE FROM news WHERE id=?",
+            (news_id,)
+        )
+
+        conn.commit()
+
+    await callback.message.edit_reply_markup(
+        reply_markup=None
+    )
+
+    await callback.message.answer(
+        TEXTS[lang]["news_deleted"]
+    )
+
+    await callback.answer(
+        "O'chirildi."
+    )
+
+
+# =========================================================
+# DELETE CANCEL
+# =========================================================
+
+@dp.callback_query(F.data == "delete_cancel")
+async def delete_cancel(callback: CallbackQuery):
+
+    await callback.answer(
+        "Bekor qilindi."
+    )
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
+    except Exception:
+        pass
+
+
+# =========================================================
+# STATISTICS
+# =========================================================
+
+@dp.message(F.text.in_({
+    "📊 Statistika",
+    "📊 Статистика"
+}))
+async def statistics(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            TEXTS[get_lang(message.from_user.id)]["admin_only"]
+        )
+
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    with closing(db()) as conn:
+
+        users = conn.execute(
+            "SELECT COUNT(*) c FROM users"
+        ).fetchone()["c"]
+
+        votes = conn.execute("""
+            SELECT COUNT(*) c
+            FROM votes
+            WHERE status='approved'
+        """).fetchone()["c"]
+
+        pending = conn.execute("""
+            SELECT COUNT(*) c
+            FROM votes
+            WHERE status='pending'
+        """).fetchone()["c"]
+
+        projects = conn.execute(
+            "SELECT COUNT(*) c FROM projects"
+        ).fetchone()["c"]
+
+        views = conn.execute("""
+            SELECT COALESCE(SUM(click_count),0) c
+            FROM projects
+        """).fetchone()["c"]
+
+        news = conn.execute(
+            "SELECT COUNT(*) c FROM news"
+        ).fetchone()["c"]
+
+        balance = conn.execute("""
+            SELECT COALESCE(SUM(balance),0) c
+            FROM users
+        """).fetchone()["c"]
+
+        withdrawn = conn.execute("""
+            SELECT COALESCE(SUM(total_withdrawn),0) c
+            FROM users
+        """).fetchone()["c"]
+
+    await message.answer(
+        TEXTS[lang]["stats"].format(
+            users=users,
+            votes=votes,
+            pending_votes=pending,
+            projects=projects,
+            views=views,
+            news=news,
+            balance=money(balance),
+            withdrawn=money(withdrawn)
+        ),
+        parse_mode="HTML",
+        reply_markup=admin_menu(lang)
+    )
+
+
+# =========================================================
+# WITHDRAW
+# =========================================================
+
+@dp.message(F.text.in_({
+    "💸 Pul yechish",
+    "💸 Вывести деньги"
+}))
+async def withdraw_start(
+    message: Message,
+    state: FSMContext
+):
+
+    add_user(message)
+
+    lang = get_lang(message.from_user.id)
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT balance
+            FROM users
+            WHERE user_id=?
+        """, (
+            message.from_user.id,
+        )).fetchone()
+
+    balance = row["balance"] or 0
+
+    if balance < MIN_WITHDRAW:
+
+        await message.answer(
+            f"❌ Minimal yechish: "
+            f"{money(MIN_WITHDRAW)} so'm\n"
+            f"💰 Balansingiz: {money(balance)} so'm",
+            reply_markup=user_menu(lang)
+        )
+
+        return
+
+    await state.clear()
+
+    await state.set_state(
+        WithdrawStates.amount
+    )
+
+    await message.answer(
+        TEXTS[lang]["withdraw_amount"].format(
+            minimum=money(MIN_WITHDRAW),
+            balance=money(balance)
+        ),
+        parse_mode="HTML",
+        reply_markup=cancel_menu(lang)
+    )
+
+
+@dp.message(WithdrawStates.amount)
+async def withdraw_amount(
+    message: Message,
+    state: FSMContext
+):
+
+    lang = get_lang(message.from_user.id)
+
+    value = (
+        message.text or ""
+    ).replace(" ", "")
+
+    if not value.isdigit():
+
+        await message.answer(
+            TEXTS[lang]["invalid_amount"]
+        )
+
+        return
+
+    amount = int(value)
+
+    if amount < MIN_WITHDRAW:
+
+        await message.answer(
+            f"❌ Minimal summa: "
+            f"{money(MIN_WITHDRAW)} so'm"
+        )
+
+        return
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT balance
+            FROM users
+            WHERE user_id=?
+        """, (
+            message.from_user.id,
+        )).fetchone()
+
+    if amount > row["balance"]:
+
+        await message.answer(
+            TEXTS[lang]["not_enough"]
+        )
+
+        return
+
+    await state.update_data(
+        amount=amount
+    )
+
+    await state.set_state(
+        WithdrawStates.info
+    )
+
+    await message.answer(
+        TEXTS[lang]["withdraw_info"]
+    )
+
+
+@dp.message(WithdrawStates.info)
+async def withdraw_info(
+    message: Message,
+    state: FSMContext
+):
+
+    if not message.text:
+        return
+
+    lang = get_lang(message.from_user.id)
+
+    data = await state.get_data()
+
+    amount = data.get("amount")
+
+    if not amount:
+
+        await state.clear()
+
+        return
+
+    with closing(db()) as conn:
+
+        conn.execute("BEGIN IMMEDIATE")
+
+        row = conn.execute("""
+            SELECT balance
+            FROM users
+            WHERE user_id=?
+        """, (
+            message.from_user.id,
+        )).fetchone()
+
+        if not row or row["balance"] < amount:
+
+            conn.rollback()
+
+            await state.clear()
+
+            await message.answer(
+                TEXTS[lang]["not_enough"],
+                reply_markup=user_menu(lang)
+            )
+
+            return
+
+        conn.execute("""
+            UPDATE users
+            SET balance=balance-?
+            WHERE user_id=?
+        """, (
+            amount,
+            message.from_user.id
+        ))
+
+        cur = conn.execute("""
+            INSERT INTO withdrawals(
+                user_id,
+                amount,
+                payment_info,
+                status
+            )
+            VALUES(?,?,?,'pending')
+        """, (
+            message.from_user.id,
+            amount,
+            message.text.strip()
+        ))
+
+        request_id = cur.lastrowid
+
+        conn.commit()
+
+    await state.clear()
+
+    await message.answer(
+        TEXTS[lang]["withdraw_created"].format(
+            amount=money(amount),
+            request_id=request_id
+        ),
+        reply_markup=user_menu(lang)
+    )
+
+
+# =========================================================
+# CANCEL
+# =========================================================
+
+@dp.message(F.text.in_({
+    "❌ Bekor qilish",
+    "❌ Отмена"
+}))
+async def cancel_handler(
+    message: Message,
+    state: FSMContext
+):
+
+    await state.clear()
+
+    lang = get_lang(
+        message.from_user.id
+    )
+
+    await message.answer(
+        TEXTS[lang]["back_menu"],
+        reply_markup=main_menu(
+            message.from_user.id,
+            lang
+        )
+    )
+
+
+@dp.message(Command("cancel"))
+async def cancel_command(
+    message: Message,
+    state: FSMContext
+):
+
+    await state.clear()
+
+    lang = get_lang(
+        message.from_user.id
+    )
+
+    await message.answer(
+        TEXTS[lang]["back_menu"],
+        reply_markup=main_menu(
+            message.from_user.id,
+            lang
+        )
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+@dp.message(F.text.in_({
+    "❓ Yordam",
+    "❓ Помощь"
+}))
+async def help_handler(message: Message):
+
+    add_user(message)
+
+    lang = get_lang(
+        message.from_user.id
+    )
+
+    await message.answer(
+        TEXTS[lang]["help_text"],
+        parse_mode="HTML",
+        reply_markup=user_menu(lang)
+    )
+
+
+# =========================================================
+# GROUP
+# =========================================================
+
+@dp.message(F.text.in_({
+    "👥 Guruhga qo'shish",
+    "👥 Guruhga qo‘shish",
+    "👥 Добавить в группу"
+}))
+async def group_handler(message: Message):
+
+    lang = get_lang(
+        message.from_user.id
+    )
+
+    me = await bot.get_me()
+
+    link = (
+        f"https://t.me/{me.username}"
+        "?startgroup=true"
+    )
+
+    await message.answer(
+        "👥 Botni guruhga qo'shish:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=TEXTS[lang]["group_add"],
+                        url=link
+                    )
+                ]
+            ]
+        )
+    )
+
+
+# =========================================================
+# UNKNOWN
+# =========================================================
+
+@dp.message()
+async def unknown(message: Message):
+
+    if not message.from_user:
+        return
+
+    add_user(message)
+
+    lang = get_lang(
+        message.from_user.id
+    )
+
+    await message.answer(
+        "❗ Iltimos, menyudagi tugmalardan foydalaning.",
+        reply_markup=main_menu(
+            message.from_user.id,
+            lang
+        )
+    )
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+async def main():
+
+    print(
+        "MAIN.PY ISHLAYAPTI",
+        flush=True
+    )
+
+    init_db()
+
+    print(
+        "DATABASE TAYYOR",
+        flush=True
+    )
+
+    me = await bot.get_me()
+
+    print(
+        f"BOT ULANDI: @{me.username}",
+        flush=True
+    )
+
+    print(
+        "POLLING BOSHLANMOQDA",
+        flush=True
+    )
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+
+    try:
+
+        asyncio.run(main())
+
+    except KeyboardInterrupt:
+
+        print(
+            "BOT TO'XTATILDI",
+            flush=True
+        )
