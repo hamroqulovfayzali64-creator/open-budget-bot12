@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-import re
+import os
 import sqlite3
 from pathlib import Path
 from contextlib import closing
@@ -34,9 +34,8 @@ from aiogram.exceptions import (
 # SOZLAMALAR
 # =========================================================
 
-BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Bir yoki bir nechta admin ID yozish mumkin:
 ADMIN_IDS = {
     7998053914,
 }
@@ -55,12 +54,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
-if not BOT_TOKEN or BOT_TOKEN == "YANGI_BOT_TOKENINGIZNI_SHU_YERGA_YOZING":
+if not BOT_TOKEN:
     raise RuntimeError(
-        "BOT_TOKEN ni main.py ichiga yozing."
+        "BOT_TOKEN topilmadi. Railway Variables ichiga BOT_TOKEN qo'ying."
     )
-
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -395,6 +392,10 @@ class BroadcastStates(StatesGroup):
 
 class VoteStates(StatesGroup):
     phone = State()
+
+    # YANGI:
+    # Admin foydalanuvchiga javob yozish holati
+    admin_reply = State()
 
 
 class WithdrawStates(StatesGroup):
@@ -1152,8 +1153,13 @@ async def vote_phone_handler(
         f"📌 Loyiha ID: <b>{project_id}</b>\n"
         f"💰 Mukofot: <b>{money(VOTE_REWARD)} so'm</b>\n\n"
         "Foydalanuvchi telefon raqamini yubordi.\n"
-        "Admin ovozni tekshirib, tasdiqlashi yoki rad etishi mumkin."
+        "Admin ovozni tekshirib, tasdiqlashi, rad etishi "
+        "yoki foydalanuvchiga javob yozishi mumkin."
     )
+
+    # =====================================================
+    # TASDIQLASH / RAD ETISH / JAVOB
+    # =====================================================
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1165,6 +1171,12 @@ async def vote_phone_handler(
                 InlineKeyboardButton(
                     text="❌ RAD ETISH",
                     callback_data=f"vote_no:{vote_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✉️ FOYDALANUVCHIGA JAVOB",
+                    callback_data=f"vote_reply:{vote_id}"
                 )
             ]
         ]
@@ -1187,6 +1199,264 @@ async def vote_phone_handler(
                 "Admin xabari yuborilmadi: %s",
                 e
             )
+
+
+# =========================================================
+# ADMIN -> FOYDALANUVCHIGA JAVOB BERISHNI BOSHLASH
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("vote_reply:")
+)
+async def vote_reply_start(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+
+    if not is_admin(callback.from_user.id):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    vote_id = int(
+        callback.data.split(":")[1]
+    )
+
+    with closing(db()) as conn:
+
+        vote = conn.execute("""
+            SELECT
+                id,
+                user_id,
+                status
+            FROM votes
+            WHERE id=?
+        """, (vote_id,)).fetchone()
+
+    if not vote:
+
+        await callback.answer(
+            "Ovoz so'rovi topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    if vote["status"] != "pending":
+
+        await callback.answer(
+            "Bu so'rov allaqachon ko'rib chiqilgan.",
+            show_alert=True
+        )
+
+        return
+
+    await state.clear()
+
+    await state.update_data(
+        vote_id=vote_id,
+        user_id=vote["user_id"]
+    )
+
+    await state.set_state(
+        VoteStates.admin_reply
+    )
+
+    await callback.message.answer(
+        f"✉️ <b>Foydalanuvchiga javob yozing.</b>\n\n"
+        f"🆔 So'rov: <b>#{vote_id}</b>\n"
+        f"👤 User ID: <code>{vote['user_id']}</code>\n\n"
+        "Yozgan xabaringiz shu foydalanuvchiga yuboriladi.\n\n"
+        "Bekor qilish uchun pastdagi tugmani bosing.",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(
+                        text="❌ Bekor qilish"
+                    )
+                ]
+            ],
+            resize_keyboard=True
+        )
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# ADMIN JAVOBINI FOYDALANUVCHIGA YUBORISH
+# =========================================================
+
+@dp.message(VoteStates.admin_reply)
+async def vote_admin_reply(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(message.from_user.id):
+
+        await state.clear()
+
+        return
+
+    # Bekor qilish tugmasi alohida handlerga o'tadi.
+    if message.text in {
+        "❌ Bekor qilish",
+        "❌ Отмена"
+    }:
+
+        await state.clear()
+
+        language = get_lang(
+            message.from_user.id
+        )
+
+        await message.answer(
+            TEXTS[language]["back_menu"],
+            reply_markup=admin_menu(language)
+        )
+
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❌ Hozircha faqat matnli xabar yuboring."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    vote_id = data.get("vote_id")
+    user_id = data.get("user_id")
+
+    if not vote_id or not user_id:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Javob yuborish ma'lumotlari topilmadi."
+        )
+
+        return
+
+    # Ovoz hali pending ekanini tekshiramiz.
+    with closing(db()) as conn:
+
+        vote = conn.execute("""
+            SELECT
+                id,
+                user_id,
+                status
+            FROM votes
+            WHERE id=?
+        """, (vote_id,)).fetchone()
+
+    if not vote:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Ovoz so'rovi topilmadi."
+        )
+
+        return
+
+    if vote["status"] != "pending":
+
+        await state.clear()
+
+        await message.answer(
+            "⚠️ Bu ovoz so'rovi allaqachon ko'rib chiqilgan."
+        )
+
+        return
+
+    # =====================================================
+    # FOYDALANUVCHIGA XABAR YUBORISH
+    # =====================================================
+
+    try:
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                "💬 <b>Admin sizga xabar yubordi:</b>\n\n"
+                f"{escape(message.text)}"
+            ),
+            parse_mode="HTML"
+        )
+
+        await state.clear()
+
+        language = get_lang(
+            message.from_user.id
+        )
+
+        await message.answer(
+            f"✅ <b>Javob foydalanuvchiga yuborildi!</b>\n\n"
+            f"🆔 So'rov: <b>#{vote_id}</b>\n"
+            f"👤 User ID: <code>{user_id}</code>",
+            parse_mode="HTML",
+            reply_markup=admin_menu(language)
+        )
+
+    except TelegramForbiddenError:
+
+        await state.clear()
+
+        language = get_lang(
+            message.from_user.id
+        )
+
+        await message.answer(
+            "❌ Xabar yuborilmadi.\n\n"
+            "Foydalanuvchi botni bloklagan.",
+            reply_markup=admin_menu(language)
+        )
+
+    except TelegramBadRequest as e:
+
+        await state.clear()
+
+        logger.warning(
+            "TelegramBadRequest: %s",
+            e
+        )
+
+        language = get_lang(
+            message.from_user.id
+        )
+
+        await message.answer(
+            "❌ Foydalanuvchiga xabar yuborishda "
+            "Telegram xatoligi yuz berdi.",
+            reply_markup=admin_menu(language)
+        )
+
+    except Exception as e:
+
+        await state.clear()
+
+        logger.exception(
+            "Admin reply error: %s",
+            e
+        )
+
+        language = get_lang(
+            message.from_user.id
+        )
+
+        await message.answer(
+            "❌ Xabar yuborishda xatolik yuz berdi.",
+            reply_markup=admin_menu(language)
+        )
 
 
 # =========================================================
@@ -1276,12 +1546,7 @@ async def vote_approve(
 
         conn.commit()
 
-    # Foydalanuvchiga xabar
     try:
-
-        lang = get_lang(
-            vote["user_id"]
-        )
 
         await bot.send_message(
             vote["user_id"],
@@ -1374,10 +1639,6 @@ async def vote_reject(
 
     try:
 
-        lang = get_lang(
-            vote["user_id"]
-        )
-
         await bot.send_message(
             vote["user_id"],
             (
@@ -1387,8 +1648,12 @@ async def vote_reject(
             parse_mode="HTML"
         )
 
-    except Exception:
-        pass
+    except Exception as e:
+
+        logger.warning(
+            "Reject notification error: %s",
+            e
+        )
 
     try:
 
@@ -2103,7 +2368,6 @@ async def withdraw_amount(
     )
 
     if not message.text:
-
         return
 
     value = message.text.replace(
@@ -2165,7 +2429,6 @@ async def withdraw_info(
 ):
 
     if not message.text:
-
         return
 
     language = get_lang(
@@ -2366,7 +2629,6 @@ async def group_handler(message: Message):
 async def unknown(message: Message):
 
     if not message.from_user:
-
         return
 
     add_user(message)
