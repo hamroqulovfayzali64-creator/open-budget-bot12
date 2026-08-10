@@ -1,15 +1,18 @@
 # =========================================================
 # MAIN.PY — OPEN BUDGET BOT
+# MA'LUMOTLARNI HIMOYALANGAN VERSIYA
 # =========================================================
 
 import asyncio
 import logging
 import re
 import sqlite3
+import shutil
 from pathlib import Path
 from contextlib import closing
 from html import escape
 from urllib.parse import urlparse
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -23,20 +26,27 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
 
 
 # =========================================================
 # 🤖 BOT TOKENI
 # =========================================================
-# SHU YERGA O'Z BOT TOKENINGIZNI YOZING
+#
+# DIQQAT:
+# Bu yerga BOTFATHER'DAN OLINGAN YANGI TOKENNI YOZING.
 #
 # Masalan:
-# BOT_TOKEN = "1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxx"
 #
-# Tokenni hech kimga yubormang!
+# BOT_TOKEN = "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxx"
+#
+# Eski tokeningizni ishlatmang!
+#
 
-BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
+BOT_TOKEN = "BU_YERGA_YANGI_BOT_TOKENINGIZNI_YOZING"
 
 
 # =========================================================
@@ -60,9 +70,24 @@ MIN_WITHDRAW = 30_000
 # =========================================================
 # DATABASE
 # =========================================================
+#
+# Railway'da Volume /data ga ulangan bo'lsa,
+# database /data/bot.db ichida saqlanadi.
+#
+# /data mavjud bo'lmasa, loyiha papkasidagi bot.db ishlaydi.
+#
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "bot.db"
+if Path("/data").exists():
+    DB_DIR = Path("/data")
+else:
+    DB_DIR = Path(__file__).resolve().parent
+
+DB_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = DB_DIR / "bot.db"
+
+BACKUP_DIR = DB_DIR / "backups"
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # =========================================================
@@ -81,7 +106,10 @@ logger = logging.getLogger(__name__)
 # TOKEN TEKSHIRISH
 # =========================================================
 
-if not BOT_TOKEN or BOT_TOKEN == "TOKENINGIZNI_SHU_YERGA_YOZING":
+if (
+    not BOT_TOKEN
+    or BOT_TOKEN == "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
+):
     raise RuntimeError(
         "BOT_TOKEN ni main.py ichida yozing!"
     )
@@ -143,11 +171,20 @@ TEXTS = {
             "https://example.com"
         ),
 
-        "project_created": "✅ Loyiha qo'shildi va saqlandi!",
-        "invalid_link": "❌ Havola noto'g'ri.",
-        "project_not_found": "❌ Loyiha topilmadi.",
-        "open_project": "🔗 Loyihani ochish",
-        "vote": "🗳 Ovoz berish",
+        "project_created":
+            "✅ Loyiha qo'shildi va saqlandi!",
+
+        "invalid_link":
+            "❌ Havola noto'g'ri.",
+
+        "project_not_found":
+            "❌ Loyiha topilmadi.",
+
+        "open_project":
+            "🔗 Loyihani ochish",
+
+        "vote":
+            "🗳 Ovoz berish",
 
         "vote_phone": (
             "📞 <b>Ovoz berish uchun telefon raqamni kiriting:</b>\n\n"
@@ -155,10 +192,9 @@ TEXTS = {
             "<b>991234567</b> formatida kiritilishi kerak."
         ),
 
-        "invalid_phone": (
+        "invalid_phone":
             "❌ Telefon raqami noto'g'ri.\n\n"
-            "Masalan: +998991234567"
-        ),
+            "Masalan: +998991234567",
 
         "vote_sent": (
             "✅ Telefon raqamingiz qabul qilindi.\n\n"
@@ -203,7 +239,8 @@ TEXTS = {
             "💰 Referal daromad: {earned} so'm"
         ),
 
-        "news_empty": "📰 Hozircha yangiliklar yo'q.",
+        "news_empty":
+            "📰 Hozircha yangiliklar yo'q.",
 
         "send_news":
             "📰 Yangilik uchun rasm, video yoki matn yuboring.",
@@ -260,7 +297,10 @@ TEXTS = {
             "🔙 Asosiy menyuga qaytdingiz.",
 
         "manage_text":
-            "🗑 O'chirish uchun bo'limni tanlang:",
+            "🛡 <b>Kontent boshqaruvi</b>\n\n"
+            "Ma'lumotlar avtomatik o'chirilmaydi.\n"
+            "O'chirish faqat admin tasdig'i bilan amalga oshadi.\n\n"
+            "Bo'limni tanlang:",
 
         "manage_projects":
             "🗑 Loyihalarni boshqarish",
@@ -268,25 +308,56 @@ TEXTS = {
         "manage_news":
             "🗑 Yangiliklarni boshqarish",
 
+        "restore_projects":
+            "♻️ Loyihalarni tiklash",
+
+        "restore_news":
+            "♻️ Yangiliklarni tiklash",
+
         "no_projects_delete":
             "📌 O'chirish uchun loyiha yo'q.",
 
         "no_news_delete":
             "📰 O'chirish uchun yangilik yo'q.",
 
+        "no_projects_restore":
+            "♻️ Tiklash uchun loyiha yo'q.",
+
+        "no_news_restore":
+            "♻️ Tiklash uchun yangilik yo'q.",
+
         "project_deleted":
-            "✅ Loyiha o'chirildi.",
+            "🗑 Loyiha yashirildi.\n\n"
+            "Ma'lumot bazadan fizik o'chirilmadi.",
 
         "news_deleted":
-            "✅ Yangilik o'chirildi.",
+            "🗑 Yangilik yashirildi.\n\n"
+            "Ma'lumot bazadan fizik o'chirilmadi.",
+
+        "project_restored":
+            "♻️ Loyiha qayta tiklandi.",
+
+        "news_restored":
+            "♻️ Yangilik qayta tiklandi.",
 
         "delete_confirm":
-            "⚠️ Haqiqatan ham o'chirmoqchimisiz?",
+            "⚠️ <b>DIQQAT!</b>\n\n"
+            "Haqiqatan ham ushbu ma'lumotni yashirmoqchimisiz?\n\n"
+            "Ma'lumot bazadan o'chirilmaydi.",
 
         "delete_yes":
-            "✅ Ha, o'chirish",
+            "✅ Ha, yashirish",
 
         "delete_no":
+            "❌ Yo'q",
+
+        "restore_confirm":
+            "♻️ Ushbu ma'lumotni qayta tiklaysizmi?",
+
+        "restore_yes":
+            "♻️ Ha, tiklash",
+
+        "restore_no":
             "❌ Yo'q",
     },
 
@@ -452,7 +523,10 @@ TEXTS = {
             "🔙 Вы вернулись в главное меню.",
 
         "manage_text":
-            "🗑 Выберите раздел:",
+            "🛡 <b>Управление контентом</b>\n\n"
+            "Данные автоматически не удаляются.\n"
+            "Удаление возможно только после подтверждения администратора.\n\n"
+            "Выберите раздел:",
 
         "manage_projects":
             "🗑 Управление проектами",
@@ -460,25 +534,56 @@ TEXTS = {
         "manage_news":
             "🗑 Управление новостями",
 
+        "restore_projects":
+            "♻️ Восстановить проекты",
+
+        "restore_news":
+            "♻️ Восстановить новости",
+
         "no_projects_delete":
             "📌 Нет проектов для удаления.",
 
         "no_news_delete":
             "📰 Нет новостей для удаления.",
 
+        "no_projects_restore":
+            "♻️ Нет проектов для восстановления.",
+
+        "no_news_restore":
+            "♻️ Нет новостей для восстановления.",
+
         "project_deleted":
-            "✅ Проект удалён.",
+            "🗑 Проект скрыт.\n\n"
+            "Данные физически не удалены из базы.",
 
         "news_deleted":
-            "✅ Новость удалена.",
+            "🗑 Новость скрыта.\n\n"
+            "Данные физически не удалены из базы.",
+
+        "project_restored":
+            "♻️ Проект восстановлен.",
+
+        "news_restored":
+            "♻️ Новость восстановлена.",
 
         "delete_confirm":
-            "⚠️ Вы действительно хотите удалить?",
+            "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+            "Вы действительно хотите скрыть эти данные?\n\n"
+            "Данные не будут физически удалены из базы.",
 
         "delete_yes":
-            "✅ Да, удалить",
+            "✅ Да, скрыть",
 
         "delete_no":
+            "❌ Нет",
+
+        "restore_confirm":
+            "♻️ Восстановить эти данные?",
+
+        "restore_yes":
+            "♻️ Да, восстановить",
+
+        "restore_no":
             "❌ Нет",
     }
 }
@@ -515,17 +620,131 @@ class AdminReplyStates(StatesGroup):
 
 
 # =========================================================
-# DATABASE
+# DATABASE CONNECTION
 # =========================================================
 
 def db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=30
+    )
+
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
+
+    conn.execute(
+        "PRAGMA busy_timeout=30000"
+    )
+
+    conn.execute(
+        "PRAGMA foreign_keys=ON"
+    )
+
     return conn
 
 
+# =========================================================
+# BACKUP
+# =========================================================
+
+def backup_database(reason="manual"):
+    """
+    DBni fizik o'chirishdan himoya qilish uchun backup.
+    Aslida biz contentni fizik o'chirmaymiz.
+    Lekin qo'shimcha himoya sifatida backup qilamiz.
+    """
+
+    try:
+
+        if not DB_PATH.exists():
+            return None
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        backup_path = (
+            BACKUP_DIR /
+            f"bot_{reason}_{timestamp}.db"
+        )
+
+        shutil.copy2(
+            DB_PATH,
+            backup_path
+        )
+
+        logger.info(
+            "DATABASE BACKUP YARATILDI: %s",
+            backup_path
+        )
+
+        # Faqat oxirgi 20 ta backup saqlanadi
+        backups = sorted(
+            BACKUP_DIR.glob("*.db"),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True
+        )
+
+        for old_file in backups[20:]:
+            try:
+                old_file.unlink()
+            except Exception:
+                pass
+
+        return backup_path
+
+    except Exception as e:
+
+        logger.error(
+            "BACKUP XATOSI: %s",
+            e
+        )
+
+        return None
+
+
+# =========================================================
+# DATABASE MIGRATION HELPERS
+# =========================================================
+
+def add_column_if_missing(
+    conn,
+    table,
+    column,
+    definition
+):
+
+    columns = conn.execute(
+        f"PRAGMA table_info({table})"
+    ).fetchall()
+
+    names = {
+        row["name"]
+        for row in columns
+    }
+
+    if column not in names:
+
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
+
+        logger.info(
+            "COLUMN QO'SHILDI: %s.%s",
+            table,
+            column
+        )
+
+
+# =========================================================
+# INIT DATABASE
+# =========================================================
+
 def init_db():
+
+    DB_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     with closing(db()) as conn:
 
@@ -539,6 +758,7 @@ def init_db():
                 balance INTEGER DEFAULT 0,
                 total_earned INTEGER DEFAULT 0,
                 total_withdrawn INTEGER DEFAULT 0,
+                blocked INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -550,6 +770,7 @@ def init_db():
                 name_ru TEXT,
                 url TEXT,
                 click_count INTEGER DEFAULT 0,
+                deleted INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -575,6 +796,7 @@ def init_db():
                 chat_id INTEGER,
                 message_id INTEGER,
                 text TEXT,
+                deleted INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -622,6 +844,28 @@ def init_db():
             )
         """)
 
+        # Eski bot.db bo'lsa kerakli ustunlarni qo'shamiz
+        add_column_if_missing(
+            conn,
+            "users",
+            "blocked",
+            "INTEGER DEFAULT 0"
+        )
+
+        add_column_if_missing(
+            conn,
+            "projects",
+            "deleted",
+            "INTEGER DEFAULT 0"
+        )
+
+        add_column_if_missing(
+            conn,
+            "news",
+            "deleted",
+            "INTEGER DEFAULT 0"
+        )
+
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_votes_user_project
             ON votes(user_id, project_id)
@@ -637,9 +881,22 @@ def init_db():
             ON admin_messages(message_id)
         """)
 
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_projects_deleted
+            ON projects(deleted)
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_news_deleted
+            ON news(deleted)
+        """)
+
         conn.commit()
 
-    logger.info("DATABASE TAYYOR")
+    logger.info(
+        "DATABASE TAYYOR: %s",
+        DB_PATH
+    )
 
 
 # =========================================================
@@ -665,13 +922,16 @@ def add_user(message):
             INSERT INTO users(
                 user_id,
                 username,
-                first_name
+                first_name,
+                blocked
             )
-            VALUES(?,?,?)
+            VALUES(?,?,?,0)
+
             ON CONFLICT(user_id)
             DO UPDATE SET
                 username=excluded.username,
-                first_name=excluded.first_name
+                first_name=excluded.first_name,
+                blocked=0
         """, (
             message.from_user.id,
             message.from_user.username,
@@ -709,7 +969,7 @@ def set_lang(user_id, language):
 
 
 # =========================================================
-# REFERALNI ISHLATISH
+# REFERAL
 # =========================================================
 
 def process_referral(user_id, referrer_id):
@@ -732,10 +992,7 @@ def process_referral(user_id, referrer_id):
             (referrer_id,)
         ).fetchone()
 
-        if not referrer:
-            return False
-
-        if not user:
+        if not referrer or not user:
             return False
 
         exists = conn.execute("""
@@ -897,7 +1154,7 @@ def language_menu():
 
 
 # =========================================================
-# START + REFERAL
+# START
 # =========================================================
 
 @dp.message(CommandStart())
@@ -1082,7 +1339,7 @@ async def ru_handler(message: Message):
 
 
 # =========================================================
-# PROJECTS
+# PROJECTS USER
 # =========================================================
 
 @dp.message(F.text.in_({
@@ -1102,8 +1359,11 @@ async def projects_handler(message: Message):
     with closing(db()) as conn:
 
         rows = conn.execute("""
-            SELECT id, name_uz, name_ru
+            SELECT id,
+                   name_uz,
+                   name_ru
             FROM projects
+            WHERE COALESCE(deleted,0)=0
             ORDER BY id DESC
         """).fetchall()
 
@@ -1147,6 +1407,10 @@ async def projects_handler(message: Message):
     )
 
 
+# =========================================================
+# PROJECT OPEN
+# =========================================================
+
 @dp.callback_query(F.data.startswith("project:"))
 async def project_handler(
     callback: CallbackQuery
@@ -1165,7 +1429,12 @@ async def project_handler(
     with closing(db()) as conn:
 
         row = conn.execute(
-            "SELECT * FROM projects WHERE id=?",
+            """
+            SELECT *
+            FROM projects
+            WHERE id=?
+              AND COALESCE(deleted,0)=0
+            """,
             (project_id,)
         ).fetchone()
 
@@ -1175,6 +1444,7 @@ async def project_handler(
                 UPDATE projects
                 SET click_count=COALESCE(click_count,0)+1
                 WHERE id=?
+                  AND COALESCE(deleted,0)=0
             """, (
                 project_id,
             ))
@@ -1254,7 +1524,12 @@ async def vote_start(
     with closing(db()) as conn:
 
         project = conn.execute(
-            "SELECT id FROM projects WHERE id=?",
+            """
+            SELECT id
+            FROM projects
+            WHERE id=?
+              AND COALESCE(deleted,0)=0
+            """,
             (project_id,)
         ).fetchone()
 
@@ -1378,7 +1653,6 @@ async def vote_phone_handler(
     if not project_id:
 
         await state.clear()
-
         return
 
     with closing(db()) as conn:
@@ -1532,9 +1806,7 @@ async def vote_approve(
 
     with closing(db()) as conn:
 
-        conn.execute(
-            "BEGIN IMMEDIATE"
-        )
+        conn.execute("BEGIN IMMEDIATE")
 
         vote = conn.execute("""
             SELECT user_id,
@@ -1621,11 +1893,9 @@ async def vote_approve(
         )
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -1708,11 +1978,9 @@ async def vote_reject(
         pass
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -1836,7 +2104,6 @@ async def admin_reply_send(
     ):
 
         await state.clear()
-
         return
 
     data = await state.get_data()
@@ -2151,8 +2418,10 @@ async def news_handler(
     with closing(db()) as conn:
 
         rows = conn.execute("""
-            SELECT chat_id, message_id
+            SELECT chat_id,
+                   message_id
             FROM news
+            WHERE COALESCE(deleted,0)=0
             ORDER BY id DESC
             LIMIT 10
         """).fetchall()
@@ -2343,9 +2612,11 @@ async def project_link(
             INSERT INTO projects(
                 name_uz,
                 name_ru,
-                url
+                url,
+                click_count,
+                deleted
             )
-            VALUES(?,?,?)
+            VALUES(?,?,?,0,0)
         """, (
             data["name"],
             data["name"],
@@ -2443,14 +2714,27 @@ async def broadcast(
 
             blocked += 1
 
+            # =================================================
+            # MUHIM:
+            # USERNI O'CHIRISH YO'Q!
+            # =================================================
+
             with closing(db()) as conn:
 
-                conn.execute(
-                    "DELETE FROM users WHERE user_id=?",
-                    (row["user_id"],)
-                )
+                conn.execute("""
+                    UPDATE users
+                    SET blocked=1
+                    WHERE user_id=?
+                """, (
+                    row["user_id"],
+                ))
 
                 conn.commit()
+
+            logger.info(
+                "User bloklagan, LEKIN DBdan O'CHIRILMADI: %s",
+                row["user_id"]
+            )
 
         except TelegramRetryAfter as e:
 
@@ -2472,9 +2756,15 @@ async def broadcast(
 
                 failed += 1
 
-        except Exception:
+        except Exception as e:
 
             failed += 1
+
+            logger.warning(
+                "Broadcast error %s: %s",
+                row["user_id"],
+                e
+            )
 
     return success, blocked, failed
 
@@ -2494,7 +2784,6 @@ async def news_add(
     ):
 
         await state.clear()
-
         return
 
     with closing(db()) as conn:
@@ -2503,9 +2792,10 @@ async def news_add(
             INSERT INTO news(
                 chat_id,
                 message_id,
-                text
+                text,
+                deleted
             )
-            VALUES(?,?,?)
+            VALUES(?,?,?,0)
         """, (
             message.chat.id,
             message.message_id,
@@ -2585,7 +2875,6 @@ async def broadcast_handler(
     ):
 
         await state.clear()
-
         return
 
     success, blocked, failed = await broadcast(
@@ -2654,12 +2943,25 @@ async def manage_content(
                     text=t["manage_news"],
                     callback_data="manage_news"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t["restore_projects"],
+                    callback_data="restore_projects"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t["restore_news"],
+                    callback_data="restore_news"
+                )
             ]
         ]
     )
 
     await message.answer(
         t["manage_text"],
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
@@ -2700,6 +3002,7 @@ async def manage_projects(
                    name_ru,
                    url
             FROM projects
+            WHERE COALESCE(deleted,0)=0
             ORDER BY id DESC
         """).fetchall()
 
@@ -2710,7 +3013,6 @@ async def manage_projects(
         )
 
         await callback.answer()
-
         return
 
     buttons = []
@@ -2733,7 +3035,7 @@ async def manage_projects(
         ])
 
     await callback.message.answer(
-        "📌 O'chirmoqchi bo'lgan loyihani tanlang:",
+        "📌 Yashirmoqchi bo'lgan loyihani tanlang:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=buttons
         )
@@ -2782,6 +3084,7 @@ async def delete_project_confirm(
                    name_ru
             FROM projects
             WHERE id=?
+              AND COALESCE(deleted,0)=0
         """, (
             project_id,
         )).fetchone()
@@ -2829,7 +3132,7 @@ async def delete_project_confirm(
 
 
 # =========================================================
-# DELETE PROJECT
+# PROJECT DELETE — SOFT DELETE
 # =========================================================
 
 @dp.callback_query(
@@ -2858,12 +3161,265 @@ async def delete_project(
         callback.from_user.id
     )
 
+    # O'chirishdan oldin backup
+    backup_database("before_project_hide")
+
     with closing(db()) as conn:
 
-        row = conn.execute(
-            "SELECT id FROM projects WHERE id=?",
-            (project_id,)
-        ).fetchone()
+        row = conn.execute("""
+            SELECT id
+            FROM projects
+            WHERE id=?
+              AND COALESCE(deleted,0)=0
+        """, (
+            project_id,
+        )).fetchone()
+
+        if not row:
+
+            await callback.answer(
+                "Loyiha topilmadi yoki allaqachon yashirilgan.",
+                show_alert=True
+            )
+
+            return
+
+        # =================================================
+        # MUHIM:
+        # DELETE FROM projects YO'Q!
+        # Faqat deleted=1.
+        # =================================================
+
+        conn.execute("""
+            UPDATE projects
+            SET deleted=1
+            WHERE id=?
+        """, (
+            project_id,
+        ))
+
+        conn.commit()
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        TEXTS[lang]["project_deleted"]
+    )
+
+    await callback.answer(
+        "Yashirildi. Ma'lumot bazada saqlandi."
+    )
+
+
+# =========================================================
+# RESTORE PROJECTS
+# =========================================================
+
+@dp.callback_query(
+    F.data == "restore_projects"
+)
+async def restore_projects(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        rows = conn.execute("""
+            SELECT id,
+                   name_uz,
+                   name_ru
+            FROM projects
+            WHERE COALESCE(deleted,0)=1
+            ORDER BY id DESC
+        """).fetchall()
+
+    if not rows:
+
+        await callback.message.answer(
+            t["no_projects_restore"]
+        )
+
+        await callback.answer()
+        return
+
+    buttons = []
+
+    for row in rows:
+
+        name = (
+            row["name_uz"]
+            or row["name_ru"]
+            or f"#{row['id']}"
+        )
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"♻️ {name}",
+                callback_data=(
+                    f"restore_project:{row['id']}"
+                )
+            )
+        ])
+
+    await callback.message.answer(
+        "♻️ Qayta tiklamoqchi bo'lgan loyihani tanlang:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# RESTORE PROJECT CONFIRM
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("restore_project:")
+)
+async def restore_project_confirm(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    project_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT id,
+                   name_uz,
+                   name_ru
+            FROM projects
+            WHERE id=?
+              AND COALESCE(deleted,0)=1
+        """, (
+            project_id,
+        )).fetchone()
+
+    if not row:
+
+        await callback.answer(
+            "Loyiha topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    name = (
+        row["name_uz"]
+        or row["name_ru"]
+        or f"#{project_id}"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=TEXTS[lang]["restore_yes"],
+                    callback_data=(
+                        f"restore_project_yes:{project_id}"
+                    )
+                ),
+                InlineKeyboardButton(
+                    text=TEXTS[lang]["restore_no"],
+                    callback_data="delete_cancel"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.answer(
+        f"{TEXTS[lang]['restore_confirm']}\n\n"
+        f"📌 <b>{escape(name)}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# RESTORE PROJECT
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("restore_project_yes:")
+)
+async def restore_project(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    project_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    backup_database("before_project_restore")
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT id
+            FROM projects
+            WHERE id=?
+              AND COALESCE(deleted,0)=1
+        """, (
+            project_id,
+        )).fetchone()
 
         if not row:
 
@@ -2874,28 +3430,29 @@ async def delete_project(
 
             return
 
-        conn.execute(
-            "DELETE FROM projects WHERE id=?",
-            (project_id,)
-        )
+        conn.execute("""
+            UPDATE projects
+            SET deleted=0
+            WHERE id=?
+        """, (
+            project_id,
+        ))
 
         conn.commit()
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
     await callback.message.answer(
-        TEXTS[lang]["project_deleted"]
+        TEXTS[lang]["project_restored"]
     )
 
     await callback.answer(
-        "O'chirildi."
+        "Loyiha tiklandi."
     )
 
 
@@ -2934,6 +3491,7 @@ async def manage_news(
                    text,
                    created_at
             FROM news
+            WHERE COALESCE(deleted,0)=0
             ORDER BY id DESC
             LIMIT 30
         """).fetchall()
@@ -2945,7 +3503,6 @@ async def manage_news(
         )
 
         await callback.answer()
-
         return
 
     buttons = []
@@ -2975,7 +3532,7 @@ async def manage_news(
         ])
 
     await callback.message.answer(
-        "📰 O'chirmoqchi bo'lgan yangilikni tanlang:",
+        "📰 Yashirmoqchi bo'lgan yangilikni tanlang:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=buttons
         )
@@ -3022,6 +3579,7 @@ async def delete_news_confirm(
             SELECT id, text
             FROM news
             WHERE id=?
+              AND COALESCE(deleted,0)=0
         """, (
             news_id,
         )).fetchone()
@@ -3071,7 +3629,7 @@ async def delete_news_confirm(
 
 
 # =========================================================
-# DELETE NEWS
+# DELETE NEWS — SOFT DELETE
 # =========================================================
 
 @dp.callback_query(
@@ -3100,10 +3658,17 @@ async def delete_news(
         callback.from_user.id
     )
 
+    backup_database("before_news_hide")
+
     with closing(db()) as conn:
 
         row = conn.execute(
-            "SELECT id FROM news WHERE id=?",
+            """
+            SELECT id
+            FROM news
+            WHERE id=?
+              AND COALESCE(deleted,0)=0
+            """,
             (news_id,)
         ).fetchone()
 
@@ -3116,19 +3681,26 @@ async def delete_news(
 
             return
 
-        conn.execute(
-            "DELETE FROM news WHERE id=?",
-            (news_id,)
-        )
+        # =================================================
+        # MUHIM:
+        # DELETE FROM news YO'Q!
+        # Faqat deleted=1.
+        # =================================================
+
+        conn.execute("""
+            UPDATE news
+            SET deleted=1
+            WHERE id=?
+        """, (
+            news_id,
+        ))
 
         conn.commit()
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -3137,7 +3709,256 @@ async def delete_news(
     )
 
     await callback.answer(
-        "O'chirildi."
+        "Yashirildi. Ma'lumot bazada saqlandi."
+    )
+
+
+# =========================================================
+# RESTORE NEWS
+# =========================================================
+
+@dp.callback_query(
+    F.data == "restore_news"
+)
+async def restore_news(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    t = TEXTS[lang]
+
+    with closing(db()) as conn:
+
+        rows = conn.execute("""
+            SELECT id,
+                   text
+            FROM news
+            WHERE COALESCE(deleted,0)=1
+            ORDER BY id DESC
+            LIMIT 30
+        """).fetchall()
+
+    if not rows:
+
+        await callback.message.answer(
+            t["no_news_restore"]
+        )
+
+        await callback.answer()
+        return
+
+    buttons = []
+
+    for row in rows:
+
+        title = (
+            row["text"]
+            or f"Yangilik #{row['id']}"
+        )
+
+        title = title.replace(
+            "\n",
+            " "
+        )
+
+        if len(title) > 35:
+            title = title[:35] + "..."
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"♻️ {title}",
+                callback_data=(
+                    f"restore_news:{row['id']}"
+                )
+            )
+        ])
+
+    await callback.message.answer(
+        "♻️ Qayta tiklamoqchi bo'lgan yangilikni tanlang:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# RESTORE NEWS CONFIRM
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("restore_news:")
+)
+async def restore_news_confirm(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    news_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    with closing(db()) as conn:
+
+        row = conn.execute("""
+            SELECT id,
+                   text
+            FROM news
+            WHERE id=?
+              AND COALESCE(deleted,0)=1
+        """, (
+            news_id,
+        )).fetchone()
+
+    if not row:
+
+        await callback.answer(
+            "Yangilik topilmadi.",
+            show_alert=True
+        )
+
+        return
+
+    title = (
+        row["text"]
+        or f"#{news_id}"
+    )
+
+    if len(title) > 100:
+        title = title[:100] + "..."
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=TEXTS[lang]["restore_yes"],
+                    callback_data=(
+                        f"restore_news_yes:{news_id}"
+                    )
+                ),
+                InlineKeyboardButton(
+                    text=TEXTS[lang]["restore_no"],
+                    callback_data="delete_cancel"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.answer(
+        f"{TEXTS[lang]['restore_confirm']}\n\n"
+        f"📰 <b>{escape(title)}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# RESTORE NEWS
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("restore_news_yes:")
+)
+async def restore_news_final(
+    callback: CallbackQuery
+):
+
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Faqat admin.",
+            show_alert=True
+        )
+
+        return
+
+    news_id = int(
+        callback.data.split(":")[1]
+    )
+
+    lang = get_lang(
+        callback.from_user.id
+    )
+
+    backup_database("before_news_restore")
+
+    with closing(db()) as conn:
+
+        row = conn.execute(
+            """
+            SELECT id
+            FROM news
+            WHERE id=?
+              AND COALESCE(deleted,0)=1
+            """,
+            (news_id,)
+        ).fetchone()
+
+        if not row:
+
+            await callback.answer(
+                "Yangilik topilmadi.",
+                show_alert=True
+            )
+
+            return
+
+        conn.execute("""
+            UPDATE news
+            SET deleted=0
+            WHERE id=?
+        """, (
+            news_id,
+        ))
+
+        conn.commit()
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        TEXTS[lang]["news_restored"]
+    )
+
+    await callback.answer(
+        "Yangilik tiklandi."
     )
 
 
@@ -3157,11 +3978,9 @@ async def delete_cancel(
     )
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -3214,18 +4033,23 @@ async def statistics(
             WHERE status='pending'
         """).fetchone()["c"]
 
-        projects = conn.execute(
-            "SELECT COUNT(*) c FROM projects"
-        ).fetchone()["c"]
+        projects = conn.execute("""
+            SELECT COUNT(*) c
+            FROM projects
+            WHERE COALESCE(deleted,0)=0
+        """).fetchone()["c"]
 
         views = conn.execute("""
             SELECT COALESCE(SUM(click_count),0) c
             FROM projects
+            WHERE COALESCE(deleted,0)=0
         """).fetchone()["c"]
 
-        news = conn.execute(
-            "SELECT COUNT(*) c FROM news"
-        ).fetchone()["c"]
+        news = conn.execute("""
+            SELECT COUNT(*) c
+            FROM news
+            WHERE COALESCE(deleted,0)=0
+        """).fetchone()["c"]
 
         balance = conn.execute("""
             SELECT COALESCE(SUM(balance),0) c
@@ -3237,17 +4061,38 @@ async def statistics(
             FROM users
         """).fetchone()["c"]
 
+        hidden_projects = conn.execute("""
+            SELECT COUNT(*) c
+            FROM projects
+            WHERE COALESCE(deleted,0)=1
+        """).fetchone()["c"]
+
+        hidden_news = conn.execute("""
+            SELECT COUNT(*) c
+            FROM news
+            WHERE COALESCE(deleted,0)=1
+        """).fetchone()["c"]
+
+    text = TEXTS[lang]["stats"].format(
+        users=users,
+        votes=votes,
+        pending_votes=pending,
+        projects=projects,
+        views=views,
+        news=news,
+        balance=money(balance),
+        withdrawn=money(withdrawn)
+    )
+
+    text += (
+        "\n\n🛡 <b>HIMOYA</b>\n"
+        f"🗂 Yashirilgan loyihalar: {hidden_projects}\n"
+        f"📰 Yashirilgan yangiliklar: {hidden_news}\n"
+        "💾 Ma'lumotlar avtomatik o'chirilmaydi."
+    )
+
     await message.answer(
-        TEXTS[lang]["stats"].format(
-            users=users,
-            votes=votes,
-            pending_votes=pending,
-            projects=projects,
-            views=views,
-            news=news,
-            balance=money(balance),
-            withdrawn=money(withdrawn)
-        ),
+        text,
         parse_mode="HTML",
         reply_markup=admin_menu(lang)
     )
@@ -3398,7 +4243,6 @@ async def withdraw_info(
     if not amount:
 
         await state.clear()
-
         return
 
     with closing(db()) as conn:
@@ -3465,7 +4309,6 @@ async def withdraw_info(
         reply_markup=user_menu(lang)
     )
 
-    # ADMINGA YUBORISH
     username = (
         f"@{message.from_user.username}"
         if message.from_user.username
@@ -3616,11 +4459,9 @@ async def withdraw_approve(
         pass
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -3689,7 +4530,6 @@ async def withdraw_reject(
             request_id,
         ))
 
-        # RAD ETILGANDA PULNI QAYTARISH
         conn.execute("""
             UPDATE users
             SET balance=COALESCE(balance,0)+?
@@ -3717,11 +4557,9 @@ async def withdraw_reject(
         pass
 
     try:
-
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
-
     except Exception:
         pass
 
@@ -3966,16 +4804,25 @@ async def main():
     )
 
     print(
+        f"DATABASE: {DB_PATH}",
+        flush=True
+    )
+
+    print(
         "========================================",
         flush=True
     )
 
+    # DB yaratish / migration
     init_db()
 
     print(
         "DATABASE TAYYOR",
         flush=True
     )
+
+    # Startup backup
+    backup_database("startup")
 
     me = await bot.get_me()
 
@@ -4012,3 +4859,12 @@ if __name__ == "__main__":
             "BOT TO'XTATILDI",
             flush=True
         )
+
+    except Exception as e:
+
+        logger.exception(
+            "BOTDA FATAL XATOLIK: %s",
+            e
+        )
+
+        raise
