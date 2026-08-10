@@ -940,7 +940,7 @@ async def ru_handler(message: Message):
 # =========================================================
 
 @dp.message(F.text.in_({
-    "📌 ovozberish",
+    "📌 loyihalar",
     "📌 Проекты"
 }))
 async def projects_handler(message: Message):
