@@ -1,64 +1,39 @@
-# ============================================================
-# TELEGRAM BOT — MAIN.PY
-# AIROGRAM 3.x
-# ============================================================
-
 import asyncio
 import logging
-import os
 import re
 import sqlite3
 from contextlib import closing
 from html import escape
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    Message,
-    CallbackQuery,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
+    Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton
 )
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
 
 
 # ============================================================
-# 1. SOZLAMALAR
+# SOZLAMALAR
 # ============================================================
 
-# ============================================================
-# BOT TOKENINI SHU YERGA YOZING
-# Masalan:
-# BOT_TOKEN = "1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxx"
-# ============================================================
-
+# BOT TOKENINI SHU YERGA QO'YING
 BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
 
-
-# ============================================================
-# ADMIN ID LARINI SHU YERGA YOZING
-#
+# ADMIN TELEGRAM ID'SINI SHU YERGA QO'YING
 # Masalan:
-# ADMIN_IDS = {123456789, 987654321}
-# ============================================================
+# ADMIN_IDS = {123456789}
+ADMIN_IDS = {7998053914}
 
-ADMIN_IDS = {
-    7998053914
-}
+DB_NAME = "bot.db"
 
-
-# Pul qiymatlari
 VOTE_REWARD = 30000
 REFERRAL_REWARD = 10000
 MIN_WITHDRAW = 30000
-
-
-DB_NAME = "bot.db"
 
 
 # ============================================================
@@ -74,257 +49,11 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# DATABASE
-# ============================================================
-
-def get_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-
-    with closing(get_db()) as db:
-
-        # Foydalanuvchilar
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                language TEXT DEFAULT 'uz',
-                phone TEXT,
-                balance INTEGER DEFAULT 0,
-                referrals INTEGER DEFAULT 0,
-                referred_by INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Ovozlar
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS votes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                vote_type TEXT NOT NULL,
-                phone TEXT,
-                project_id INTEGER,
-                status TEXT DEFAULT 'pending',
-                reward INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Loyihalar
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                url TEXT,
-                active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Pul yechish
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS withdrawals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                amount INTEGER NOT NULL,
-                card_number TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Savollar
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS support_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                admin_id INTEGER,
-                message TEXT,
-                direction TEXT,
-                status TEXT DEFAULT 'open',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Sozlamalar
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-
-        # Referral takrorlanishidan himoya
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                inviter_id INTEGER NOT NULL,
-                invited_id INTEGER NOT NULL UNIQUE,
-                reward INTEGER DEFAULT 10000,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Telefon raqamini qayta ishlatishdan himoya
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS used_phones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone TEXT UNIQUE NOT NULL,
-                user_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        db.commit()
-
-
-# ============================================================
-# DATABASE YORDAMCHI FUNKSIYALAR
-# ============================================================
-
-def get_setting(key, default=""):
-    with closing(get_db()) as db:
-        row = db.execute(
-            "SELECT value FROM settings WHERE key=?",
-            (key,)
-        ).fetchone()
-
-        return row["value"] if row else default
-
-
-def set_setting(key, value):
-    with closing(get_db()) as db:
-        db.execute("""
-            INSERT INTO settings(key, value)
-            VALUES(?, ?)
-            ON CONFLICT(key)
-            DO UPDATE SET value=excluded.value
-        """, (key, value))
-        db.commit()
-
-
-def add_user(user_id, username, first_name, referred_by=None):
-
-    with closing(get_db()) as db:
-
-        existing = db.execute(
-            "SELECT user_id FROM users WHERE user_id=?",
-            (user_id,)
-        ).fetchone()
-
-        if existing:
-            db.execute("""
-                UPDATE users
-                SET username=?, first_name=?
-                WHERE user_id=?
-            """, (username, first_name, user_id))
-
-            db.commit()
-            return False
-
-        # O'zini o'zi referral qilishni taqiqlash
-        if referred_by == user_id:
-            referred_by = None
-
-        db.execute("""
-            INSERT INTO users(
-                user_id,
-                username,
-                first_name,
-                referred_by
-            )
-            VALUES(?,?,?,?)
-        """, (
-            user_id,
-            username,
-            first_name,
-            referred_by
-        ))
-
-        db.commit()
-        return True
-
-
-def get_user(user_id):
-
-    with closing(get_db()) as db:
-        return db.execute(
-            "SELECT * FROM users WHERE user_id=?",
-            (user_id,)
-        ).fetchone()
-
-
-def add_balance(user_id, amount):
-
-    with closing(get_db()) as db:
-        db.execute("""
-            UPDATE users
-            SET balance = balance + ?
-            WHERE user_id=?
-        """, (amount, user_id))
-
-        db.commit()
-
-
-def subtract_balance(user_id, amount):
-
-    with closing(get_db()) as db:
-        db.execute("""
-            UPDATE users
-            SET balance =
-                CASE
-                    WHEN balance >= ? THEN balance - ?
-                    ELSE 0
-                END
-            WHERE user_id=?
-        """, (amount, amount, user_id))
-
-        db.commit()
-
-
-def normalize_phone(phone):
-
-    phone = re.sub(r"[^\d+]", "", phone)
-
-    if phone.startswith("00"):
-        phone = "+" + phone[2:]
-
-    if phone.startswith("+"):
-        digits = "+" + re.sub(r"\D", "", phone)
-    else:
-        digits = re.sub(r"\D", "", phone)
-
-    return digits
-
-
-def valid_phone(phone):
-
-    phone = normalize_phone(phone)
-
-    if phone.startswith("+"):
-        digits = phone[1:]
-    else:
-        digits = phone
-
-    return 8 <= len(digits) <= 15
-
-
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
-
-
-# ============================================================
-# BOT / DISPATCHER
+# BOT
 # ============================================================
 
 bot = Bot(
-    token=BOT_TOKEN,
+    BOT_TOKEN,
     default=DefaultBotProperties(
         parse_mode=ParseMode.HTML
     )
@@ -338,24 +67,254 @@ dp = Dispatcher()
 # ============================================================
 
 class UserStates(StatesGroup):
-    waiting_question = State()
-    waiting_phone = State()
-    waiting_card = State()
+    question = State()
+    phone = State()
+    card = State()
 
 
 class AdminStates(StatesGroup):
-    waiting_project_name = State()
-    waiting_project_url = State()
-    waiting_broadcast = State()
-    waiting_contact = State()
-    waiting_reply = State()
+    reply = State()
+    project_name = State()
+    project_url = State()
+    vote_url = State()
+    contact = State()
+    broadcast = State()
 
 
 # ============================================================
-# USER KEYBOARD
+# DATABASE
 # ============================================================
 
-def user_keyboard():
+def db():
+    return sqlite3.connect(DB_NAME)
+
+
+def init_db():
+
+    with closing(db()) as c:
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT DEFAULT '',
+                first_name TEXT DEFAULT '',
+                balance INTEGER DEFAULT 0,
+                referrals INTEGER DEFAULT 0,
+                referred_by INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT DEFAULT '',
+                active INTEGER DEFAULT 1
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                vote_type TEXT NOT NULL,
+                phone TEXT DEFAULT '',
+                status TEXT DEFAULT 'pending',
+                reward INTEGER DEFAULT 30000,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS used_phones (
+                phone TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                vote_id INTEGER NOT NULL
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inviter_id INTEGER NOT NULL,
+                invited_id INTEGER UNIQUE NOT NULL,
+                reward INTEGER DEFAULT 10000,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS withdrawals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                card_number TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                user_id INTEGER PRIMARY KEY,
+                status TEXT DEFAULT 'closed',
+                admin_id INTEGER
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                admin_id INTEGER,
+                direction TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT DEFAULT ''
+            )
+        """)
+
+        c.commit()
+
+
+# ============================================================
+# YORDAMCHI FUNKSIYALAR
+# ============================================================
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+
+def setting(key, default=""):
+
+    with closing(db()) as c:
+
+        row = c.execute(
+            "SELECT value FROM settings WHERE key=?",
+            (key,)
+        ).fetchone()
+
+        return row[0] if row else default
+
+
+def set_setting(key, value):
+
+    with closing(db()) as c:
+
+        c.execute("""
+            INSERT INTO settings(key, value)
+            VALUES(?, ?)
+            ON CONFLICT(key)
+            DO UPDATE SET value=excluded.value
+        """, (key, value))
+
+        c.commit()
+
+
+def add_user(user, referred_by=None):
+
+    with closing(db()) as c:
+
+        old = c.execute(
+            "SELECT user_id FROM users WHERE user_id=?",
+            (user.id,)
+        ).fetchone()
+
+        if old:
+
+            c.execute("""
+                UPDATE users
+                SET username=?,
+                    first_name=?
+                WHERE user_id=?
+            """, (
+                user.username or "",
+                user.first_name or "",
+                user.id
+            ))
+
+            c.commit()
+            return False
+
+        if referred_by == user.id:
+            referred_by = None
+
+        c.execute("""
+            INSERT INTO users(
+                user_id,
+                username,
+                first_name,
+                referred_by
+            )
+            VALUES(?,?,?,?)
+        """, (
+            user.id,
+            user.username or "",
+            user.first_name or "",
+            referred_by
+        ))
+
+        c.commit()
+
+        return True
+
+
+def user_row(user_id):
+
+    with closing(db()) as c:
+
+        return c.execute(
+            "SELECT * FROM users WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+
+
+def money(value):
+
+    return f"{int(value):,}".replace(",", " ")
+
+
+def normalize_phone(value):
+
+    value = re.sub(
+        r"[^\d+]",
+        "",
+        value or ""
+    )
+
+    if value.startswith("00"):
+        value = "+" + value[2:]
+
+    return value
+
+
+def valid_phone(value):
+
+    phone = normalize_phone(value)
+
+    if phone.startswith("+"):
+        digits = phone[1:]
+    else:
+        digits = phone
+
+    return (
+        digits.isdigit()
+        and 8 <= len(digits) <= 15
+    )
+
+
+# ============================================================
+# FOYDALANUVCHI MENYUSI
+# ============================================================
+
+def user_kb():
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -381,10 +340,10 @@ def user_keyboard():
 
 
 # ============================================================
-# ADMIN KEYBOARD
+# ADMIN MENYUSI
 # ============================================================
 
-def admin_keyboard():
+def admin_kb():
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -394,11 +353,11 @@ def admin_keyboard():
             ],
             [
                 KeyboardButton(text="🗳 Ovozlar"),
-                KeyboardButton(text="💳 Pul yechishlar")
+                KeyboardButton(text="📱 Telefon ovozlari")
             ],
             [
-                KeyboardButton(text="❓ Savollar"),
-                KeyboardButton(text="📱 Telefon ovozlari")
+                KeyboardButton(text="💳 Pul yechishlar"),
+                KeyboardButton(text="❓ Savollar")
             ],
             [
                 KeyboardButton(text="👥 Referallar"),
@@ -406,11 +365,11 @@ def admin_keyboard():
             ],
             [
                 KeyboardButton(text="👨‍💻 Admin kontakt"),
-                KeyboardButton(text="📢 Reklama")
+                KeyboardButton(text="➕ Loyiha qo‘shish")
             ],
             [
-                KeyboardButton(text="➕ Loyiha qo‘shish"),
-                KeyboardButton(text="📌 Loyihalar")
+                KeyboardButton(text="📌 Loyihalar"),
+                KeyboardButton(text="📢 Reklama")
             ],
             [
                 KeyboardButton(text="🏠 Foydalanuvchi menyusi")
@@ -422,10 +381,10 @@ def admin_keyboard():
 
 
 # ============================================================
-# INLINE KEYBOARDS
+# INLINE TUGMALAR
 # ============================================================
 
-def vote_keyboard():
+def vote_kb():
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -445,58 +404,60 @@ def vote_keyboard():
     )
 
 
-def withdrawal_keyboard(withdraw_id):
+def vote_admin_kb(vote_id):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ To‘landi",
-                    callback_data=f"withdraw_paid:{withdraw_id}"
-                ),
-                InlineKeyboardButton(
-                    text="❌ Rad etish",
-                    callback_data=f"withdraw_reject:{withdraw_id}"
-                )
-            ]
-        ]
-    )
-
-
-def vote_admin_keyboard(vote_id):
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Ovoz tasdiqlandi",
-                    callback_data=f"vote_approve:{vote_id}"
+                    text="✅ Tasdiqlash",
+                    callback_data=f"va:{vote_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="❌ Rad etish",
-                    callback_data=f"vote_reject:{vote_id}"
+                    callback_data=f"vr:{vote_id}"
                 )
             ]
         ]
     )
 
 
-def close_chat_keyboard(user_id):
+def chat_kb(user_id):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="💬 Javob berish",
-                    callback_data=f"reply_user:{user_id}"
+                    callback_data=f"reply:{user_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="🔒 Suhbatni yopish",
-                    callback_data=f"close_chat:{user_id}"
+                    callback_data=f"close:{user_id}"
+                )
+            ]
+        ]
+    )
+
+
+def withdraw_kb(withdraw_id):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ To‘landi",
+                    callback_data=f"wp:{withdraw_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Rad etish",
+                    callback_data=f"wr:{withdraw_id}"
                 )
             ]
         ]
@@ -508,99 +469,137 @@ def close_chat_keyboard(user_id):
 # ============================================================
 
 @dp.message(CommandStart())
-async def start_handler(message: Message, state: FSMContext):
+async def start_handler(
+    message: Message,
+    state: FSMContext
+):
 
     await state.clear()
 
-    user = message.from_user
-
-    # Referral
     referred_by = None
 
-    parts = message.text.split(maxsplit=1)
+    parts = (
+        message.text or ""
+    ).split(
+        maxsplit=1
+    )
 
-    if len(parts) > 1:
+    if len(parts) == 2:
 
         code = parts[1]
 
         if code.startswith("ref_"):
 
             try:
-                referred_by = int(code.replace("ref_", ""))
+                referred_by = int(
+                    code[4:]
+                )
             except ValueError:
                 referred_by = None
 
     is_new = add_user(
-        user.id,
-        user.username or "",
-        user.first_name or "",
+        message.from_user,
         referred_by
     )
 
-    # Yangi foydalanuvchi bo'lsa referral mukofoti
-    if is_new and referred_by:
+    if (
+        is_new
+        and referred_by
+        and referred_by != message.from_user.id
+    ):
 
-        if referred_by != user.id:
+        with closing(db()) as c:
 
-            try:
+            inviter = c.execute(
+                "SELECT user_id FROM users WHERE user_id=?",
+                (referred_by,)
+            ).fetchone()
 
-                with closing(get_db()) as db:
+            already = c.execute(
+                "SELECT id FROM referrals WHERE invited_id=?",
+                (message.from_user.id,)
+            ).fetchone()
 
-                    already = db.execute(
-                        "SELECT id FROM referrals WHERE invited_id=?",
-                        (user.id,)
-                    ).fetchone()
+            if inviter and not already:
 
-                    inviter = db.execute(
-                        "SELECT user_id FROM users WHERE user_id=?",
-                        (referred_by,)
-                    ).fetchone()
+                c.execute("""
+                    INSERT INTO referrals(
+                        inviter_id,
+                        invited_id,
+                        reward
+                    )
+                    VALUES(?,?,?)
+                """, (
+                    referred_by,
+                    message.from_user.id,
+                    REFERRAL_REWARD
+                ))
 
-                    if not already and inviter:
+                c.execute("""
+                    UPDATE users
+                    SET balance=balance+?,
+                        referrals=referrals+1
+                    WHERE user_id=?
+                """, (
+                    REFERRAL_REWARD,
+                    referred_by
+                ))
 
-                        db.execute("""
-                            INSERT INTO referrals(
-                                inviter_id,
-                                invited_id,
-                                reward
-                            )
-                            VALUES(?,?,?)
-                        """, (
-                            referred_by,
-                            user.id,
-                            REFERRAL_REWARD
-                        ))
+                c.commit()
 
-                        db.execute("""
-                            UPDATE users
-                            SET balance=balance+?,
-                                referrals=referrals+1
-                            WHERE user_id=?
-                        """, (
-                            REFERRAL_REWARD,
-                            referred_by
-                        ))
+                try:
 
-                        db.commit()
+                    await bot.send_message(
+                        referred_by,
+                        "🎉 <b>Yangi do‘st taklif qilindi!</b>\n\n"
+                        f"💰 Balansingizga "
+                        f"<b>+{money(REFERRAL_REWARD)} so‘m</b> qo‘shildi."
+                    )
 
-                        try:
-                            await bot.send_message(
-                                referred_by,
-                                f"🎉 <b>Yangi do‘st taklif qilindi!</b>\n\n"
-                                f"💰 Balansingizga "
-                                f"<b>{REFERRAL_REWARD:,} so‘m</b> qo‘shildi."
-                            )
-                        except Exception:
-                            pass
-
-            except Exception:
-                logger.exception("Referral error")
+                except Exception:
+                    pass
 
     await message.answer(
         "👋 <b>Assalomu alaykum!</b>\n\n"
         "Botga xush kelibsiz.\n"
         "Kerakli bo‘limni pastdagi menyudan tanlang.",
-        reply_markup=user_keyboard()
+        reply_markup=user_kb()
+    )
+
+
+# ============================================================
+# ADMIN START
+# ============================================================
+
+@dp.message(Command("admin"))
+async def admin_command(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            "❌ Siz admin emassiz."
+        )
+        return
+
+    await message.answer(
+        "👨‍💼 <b>Admin panel</b>",
+        reply_markup=admin_kb()
+    )
+
+
+# ============================================================
+# FOYDALANUVCHI MENYUSIGA QAYTISH
+# ============================================================
+
+@dp.message(F.text == "🏠 Foydalanuvchi menyusi")
+async def user_menu(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer(
+        "🏠 <b>Foydalanuvchi menyusi</b>",
+        reply_markup=user_kb()
     )
 
 
@@ -611,47 +610,86 @@ async def start_handler(message: Message, state: FSMContext):
 @dp.message(F.text == "📌 Loyihalar")
 async def projects_handler(message: Message):
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        projects = db.execute("""
-            SELECT *
+        rows = c.execute("""
+            SELECT id, name, url
             FROM projects
             WHERE active=1
             ORDER BY id DESC
         """).fetchall()
 
-    if not projects:
+    # ADMIN
+    if is_admin(message.from_user.id):
+
+        if not rows:
+
+            await message.answer(
+                "📌 Loyihalar mavjud emas.",
+                reply_markup=admin_kb()
+            )
+
+            return
+
+        text = "📌 <b>Loyihalar</b>\n\n"
+
+        for row in rows:
+
+            text += (
+                f"🆔 {row[0]}\n"
+                f"📌 {escape(row[1])}\n"
+                f"🔗 {escape(row[2] or '-')}\n"
+                f"────────────\n"
+            )
 
         await message.answer(
-            "📌 <b>Hozircha loyihalar mavjud emas.</b>",
-            reply_markup=user_keyboard()
+            text,
+            reply_markup=admin_kb()
         )
+
+        return
+
+    # USER
+
+    if not rows:
+
+        await message.answer(
+            "📌 <b>Hozircha loyiha yo‘q.</b>",
+            reply_markup=user_kb()
+        )
+
         return
 
     text = "📌 <b>Loyihalar</b>\n\n"
 
     buttons = []
 
-    for project in projects:
+    for row in rows:
 
         text += (
-            f"🔹 <b>{escape(project['name'])}</b>\n"
-            f"🔗 {escape(project['url'] or 'Havola hali qo‘shilmagan')}\n\n"
+            f"🔹 <b>{escape(row[1])}</b>\n\n"
         )
 
-        if project["url"]:
+        if row[2]:
+
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"🔗 {project['name']}",
-                    url=project["url"]
+                    text=row[1],
+                    url=row[2]
                 )
             ])
 
+    keyboard = None
+
+    if buttons:
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=buttons
+        )
+
     await message.answer(
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=buttons
-        ) if buttons else None
+        reply_markup=keyboard
     )
 
 
@@ -660,39 +698,50 @@ async def projects_handler(message: Message):
 # ============================================================
 
 @dp.message(F.text == "🗳 Ovoz berish")
-async def vote_handler(message: Message):
+async def vote_start(message: Message):
+
+    if is_admin(message.from_user.id):
+        return
 
     await message.answer(
-        "🗳 <b>Ovoz berish usulini tanlang:</b>\n\n"
-        "Quyidagi usullardan birini tanlang:",
-        reply_markup=vote_keyboard()
+        "🗳 <b>Ovoz berish usulini tanlang:</b>",
+        reply_markup=vote_kb()
     )
 
 
-@dp.callback_query(F.data == "vote_link")
-async def vote_link_callback(callback: CallbackQuery):
+# ============================================================
+# HAVOLA ORQALI OVOZ
+# ============================================================
 
-    url = get_setting("vote_url", "")
+@dp.callback_query(F.data == "vote_link")
+async def vote_link_callback(
+    callback: CallbackQuery
+):
+
+    url = setting(
+        "vote_url"
+    )
 
     if not url:
 
         await callback.message.answer(
-            "❌ Hozircha ovoz berish havolasi admin tomonidan "
-            "qo‘shilmagan."
+            "❌ Hozircha ovoz berish havolasi "
+            "admin tomonidan qo‘shilmagan."
         )
 
-        await callback.answer()
-        return
+    else:
 
-    await callback.message.answer(
-        "🔗 <b>Ovoz berish havolasi:</b>\n\n"
-        f"{escape(url)}\n\n"
-        "Ovoz berib bo‘lganingizdan keyin kerak bo‘lsa "
-        "telefon orqali ovoz berish bo‘limidan foydalaning."
-    )
+        await callback.message.answer(
+            "🔗 <b>Ovoz berish havolasi:</b>\n\n"
+            f"{escape(url)}"
+        )
 
     await callback.answer()
 
+
+# ============================================================
+# TELEFON ORQALI OVOZ
+# ============================================================
 
 @dp.callback_query(F.data == "vote_phone")
 async def vote_phone_callback(
@@ -700,25 +749,28 @@ async def vote_phone_callback(
     state: FSMContext
 ):
 
-    await state.set_state(UserStates.waiting_phone)
+    await state.set_state(
+        UserStates.phone
+    )
 
     await callback.message.answer(
         "📱 <b>Telefon raqamingizni yuboring.</b>\n\n"
-        "Raqamni xalqaro formatda yozing.\n"
-        "Masalan: <code>+998901234567</code>\n\n"
-        "⚠️ Bir xil telefon raqami qayta ishlatilmaydi."
+        "Masalan:\n"
+        "<code>+998901234567</code>"
     )
 
     await callback.answer()
 
 
-@dp.message(UserStates.waiting_phone)
+@dp.message(UserStates.phone)
 async def phone_received(
     message: Message,
     state: FSMContext
 ):
 
-    phone = normalize_phone(message.text or "")
+    phone = normalize_phone(
+        message.text
+    )
 
     if not valid_phone(phone):
 
@@ -727,12 +779,13 @@ async def phone_received(
             "Masalan:\n"
             "<code>+998901234567</code>"
         )
+
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        used = db.execute(
-            "SELECT id FROM used_phones WHERE phone=?",
+        used = c.execute(
+            "SELECT phone FROM used_phones WHERE phone=?",
             (phone,)
         ).fetchone()
 
@@ -741,12 +794,13 @@ async def phone_received(
             await state.clear()
 
             await message.answer(
-                "❌ Bu telefon raqami avval yuborilgan.",
-                reply_markup=user_keyboard()
+                "❌ Bu telefon raqami avval ishlatilgan.",
+                reply_markup=user_kb()
             )
+
             return
 
-        db.execute("""
+        c.execute("""
             INSERT INTO votes(
                 user_id,
                 vote_type,
@@ -763,31 +817,43 @@ async def phone_received(
             VOTE_REWARD
         ))
 
-        db.commit()
-
-        vote_id = db.execute(
+        vote_id = c.execute(
             "SELECT last_insert_rowid()"
         ).fetchone()[0]
+
+        c.execute("""
+            INSERT INTO chats(
+                user_id,
+                status
+            )
+            VALUES(?, 'open')
+            ON CONFLICT(user_id)
+            DO UPDATE SET status='open'
+        """, (
+            message.from_user.id,
+        ))
+
+        c.commit()
 
     await state.clear()
 
     await message.answer(
         "✅ <b>Telefon raqamingiz qabul qilindi.</b>\n\n"
-        "Admin tekshirganidan so‘ng tasdiqlangan ovoz uchun "
-        f"<b>{VOTE_REWARD:,} so‘m</b> balansingizga qo‘shiladi.",
-        reply_markup=user_keyboard()
+        "Admin tekshirganidan keyin tasdiqlanadi.\n"
+        f"✅ Tasdiqlansa <b>{money(VOTE_REWARD)} so‘m</b> "
+        "balansingizga qo‘shiladi.",
+        reply_markup=user_kb()
     )
 
-    # Adminlarga yuborish
     user = message.from_user
 
     admin_text = (
-        "📱 <b>Yangi telefon ovozi!</b>\n\n"
+        "📱 <b>YANGI TELEFON OVOZI</b>\n\n"
         f"👤 Ism: {escape(user.first_name or '')}\n"
         f"🆔 ID: <code>{user.id}</code>\n"
         f"👤 Username: @{escape(user.username or 'yo‘q')}\n"
         f"📞 Telefon: <code>{escape(phone)}</code>\n"
-        f"💰 Mukofot: {VOTE_REWARD:,} so‘m\n"
+        f"💰 Mukofot: {money(VOTE_REWARD)} so‘m\n"
         f"🆔 Ovoz ID: <code>{vote_id}</code>"
     )
 
@@ -798,166 +864,214 @@ async def phone_received(
             await bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=vote_admin_keyboard(vote_id)
+                reply_markup=vote_admin_kb(
+                    vote_id
+                )
             )
 
         except Exception:
-            logger.exception("Admin notification error")
+
+            logger.exception(
+                "Admin notification error"
+            )
 
 
 # ============================================================
-# ADMIN — OVOZNI TASDIQLASH
+# OVOZNI TASDIQLASH
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("vote_approve:")
-)
-async def approve_vote(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("va:"))
+async def vote_approve(
+    callback: CallbackQuery
+):
 
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q!", show_alert=True)
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Ruxsat yo‘q!",
+            show_alert=True
+        )
+
         return
 
-    vote_id = int(callback.data.split(":")[1])
+    vote_id = int(
+        callback.data.split(":")[1]
+    )
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        vote = db.execute(
+        vote = c.execute(
             "SELECT * FROM votes WHERE id=?",
             (vote_id,)
         ).fetchone()
 
         if not vote:
+
             await callback.answer(
                 "Ovoz topilmadi.",
                 show_alert=True
             )
+
             return
 
-        if vote["status"] != "pending":
+        # vote:
+        # 0=id
+        # 1=user_id
+        # 2=vote_type
+        # 3=phone
+        # 4=status
+        # 5=reward
+
+        if vote[4] != "pending":
+
             await callback.answer(
                 "Bu ovoz allaqachon ko‘rib chiqilgan.",
                 show_alert=True
             )
+
             return
 
-        phone = vote["phone"]
-
-        used = db.execute(
-            "SELECT id FROM used_phones WHERE phone=?",
-            (phone,)
+        used = c.execute(
+            "SELECT phone FROM used_phones WHERE phone=?",
+            (vote[3],)
         ).fetchone()
 
         if used:
 
-            db.execute("""
+            c.execute("""
                 UPDATE votes
                 SET status='rejected'
                 WHERE id=?
-            """, (vote_id,))
+            """, (
+                vote_id,
+            ))
 
-            db.commit()
+            c.commit()
 
             await callback.message.edit_reply_markup(
                 reply_markup=None
             )
 
-            await callback.message.answer(
-                "❌ Bu telefon raqami oldin ishlatilgan."
+            await callback.answer(
+                "Bu raqam oldin ishlatilgan.",
+                show_alert=True
             )
 
-            await callback.answer()
             return
 
-        db.execute("""
+        c.execute("""
             UPDATE votes
-            SET status='approved',
-                reward=?
+            SET status='approved'
             WHERE id=?
         """, (
-            VOTE_REWARD,
+            vote_id,
+        ))
+
+        c.execute("""
+            INSERT INTO used_phones(
+                phone,
+                user_id,
+                vote_id
+            )
+            VALUES(?,?,?)
+        """, (
+            vote[3],
+            vote[1],
             vote_id
         ))
 
-        db.execute("""
-            INSERT INTO used_phones(phone, user_id)
-            VALUES(?,?)
-        """, (
-            phone,
-            vote["user_id"]
-        ))
-
-        db.execute("""
+        c.execute("""
             UPDATE users
             SET balance=balance+?
             WHERE user_id=?
         """, (
             VOTE_REWARD,
-            vote["user_id"]
+            vote[1]
         ))
 
-        db.commit()
+        c.commit()
 
     await callback.message.edit_reply_markup(
         reply_markup=None
     )
 
-    await callback.message.answer(
-        f"✅ Ovoz tasdiqlandi.\n"
-        f"💰 {VOTE_REWARD:,} so‘m balansga qo‘shildi."
-    )
-
     try:
 
         await bot.send_message(
-            vote["user_id"],
-            f"🎉 <b>Ovozingiz tasdiqlandi!</b>\n\n"
+            vote[1],
+            "🎉 <b>Ovozingiz tasdiqlandi!</b>\n\n"
             f"💰 Balansingizga "
-            f"<b>{VOTE_REWARD:,} so‘m</b> qo‘shildi."
+            f"<b>+{money(VOTE_REWARD)} so‘m</b> qo‘shildi."
         )
 
     except Exception:
         pass
 
-    await callback.answer("Tasdiqlandi")
+    await callback.answer(
+        "Ovoz tasdiqlandi!"
+    )
 
 
 # ============================================================
-# ADMIN — OVOZNI RAD ETISH
+# OVOZNI RAD ETISH
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("vote_reject:")
-)
-async def reject_vote(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("vr:"))
+async def vote_reject(
+    callback: CallbackQuery
+):
 
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q!", show_alert=True)
+    if not is_admin(
+        callback.from_user.id
+    ):
+
+        await callback.answer(
+            "Ruxsat yo‘q!",
+            show_alert=True
+        )
+
         return
 
-    vote_id = int(callback.data.split(":")[1])
+    vote_id = int(
+        callback.data.split(":")[1]
+    )
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        vote = db.execute(
+        vote = c.execute(
             "SELECT * FROM votes WHERE id=?",
             (vote_id,)
         ).fetchone()
 
         if not vote:
+
             await callback.answer(
-                "Topilmadi.",
+                "Ovoz topilmadi.",
                 show_alert=True
             )
+
             return
 
-        db.execute("""
+        if vote[4] != "pending":
+
+            await callback.answer(
+                "Bu ovoz allaqachon ko‘rib chiqilgan.",
+                show_alert=True
+            )
+
+            return
+
+        c.execute("""
             UPDATE votes
             SET status='rejected'
             WHERE id=?
-        """, (vote_id,))
+        """, (
+            vote_id,
+        ))
 
-        db.commit()
+        c.commit()
 
     await callback.message.edit_reply_markup(
         reply_markup=None
@@ -966,15 +1080,17 @@ async def reject_vote(callback: CallbackQuery):
     try:
 
         await bot.send_message(
-            vote["user_id"],
-            "❌ <b>Ovoz tasdiqlanmadi.</b>\n\n"
+            vote[1],
+            "❌ <b>Ovozingiz tasdiqlanmadi.</b>\n\n"
             "Qo‘shimcha ma’lumot uchun admin bilan bog‘lanishingiz mumkin."
         )
 
     except Exception:
         pass
 
-    await callback.answer("Rad etildi")
+    await callback.answer(
+        "Ovoz rad etildi."
+    )
 
 
 # ============================================================
@@ -982,23 +1098,33 @@ async def reject_vote(callback: CallbackQuery):
 # ============================================================
 
 @dp.message(F.text == "💰 Balans")
-async def balance_handler(message: Message):
+async def balance_handler(
+    message: Message
+):
 
-    user = get_user(message.from_user.id)
+    if is_admin(message.from_user.id):
+        return
 
-    balance = user["balance"] if user else 0
+    user = user_row(
+        message.from_user.id
+    )
+
+    balance = (
+        user[3]
+        if user
+        else 0
+    )
 
     await message.answer(
-        "💰 <b>Sizning balansingiz</b>\n\n"
-        f"💵 Balans: <b>{balance:,} so‘m</b>\n\n"
-        "💳 <b>Balansdagi pulni yechish uchun "
-        "balansda kamida 30 000 so‘m bo‘lishi kerak.</b>\n\n"
-        "Balansni to‘ldirish uchun 🗳 <b>Ovoz berish</b> "
-        "bo‘limidan foydalaning.\n\n"
-        f"🗳 Har bir tasdiqlangan telefon ovozi uchun "
-        f"<b>{VOTE_REWARD:,} so‘m</b> hisoblanadi.\n"
-        f"👥 Har bir haqiqiy taklif qilingan do‘st uchun "
-        f"<b>{REFERRAL_REWARD:,} so‘m</b> beriladi."
+        "💰 <b>SIZNING BALANSINGIZ</b>\n\n"
+        f"💵 Balans: <b>{money(balance)} so‘m</b>\n\n"
+        "💳 <b>BALANSDAGI PULNI YECHISH UCHUN "
+        "BALANSDA KAMIDA 30 MING SO‘M BO‘LISHI KERAK.</b>\n\n"
+        "🗳 Balansni to‘ldirish uchun ovoz bering.\n\n"
+        f"Har bir tasdiqlangan ovoz uchun "
+        f"<b>{money(VOTE_REWARD)} so‘m</b>.\n"
+        f"Har bir haqiqiy referral uchun "
+        f"<b>{money(REFERRAL_REWARD)} so‘m</b>."
     )
 
 
@@ -1007,7 +1133,12 @@ async def balance_handler(message: Message):
 # ============================================================
 
 @dp.message(F.text == "👥 Do‘stlarni taklif qilish")
-async def referral_handler(message: Message):
+async def referral_handler(
+    message: Message
+):
+
+    if is_admin(message.from_user.id):
+        return
 
     me = await bot.get_me()
 
@@ -1016,20 +1147,23 @@ async def referral_handler(message: Message):
         f"?start=ref_{message.from_user.id}"
     )
 
-    user = get_user(message.from_user.id)
+    user = user_row(
+        message.from_user.id
+    )
 
-    referrals = user["referrals"] if user else 0
-
-    earned = referrals * REFERRAL_REWARD
+    referrals = (
+        user[4]
+        if user
+        else 0
+    )
 
     await message.answer(
-        "👥 <b>Do‘stlarni taklif qilish</b>\n\n"
+        "👥 <b>DO‘STLARNI TAKLIF QILISH</b>\n\n"
         "Do‘stlaringizni quyidagi havola orqali taklif qiling:\n\n"
         f"<code>{link}</code>\n\n"
         f"👥 Taklif qilinganlar: <b>{referrals}</b>\n"
-        f"💰 Referaldan olingan: <b>{earned:,} so‘m</b>\n\n"
-        f"🎁 Har bir haqiqiy yangi foydalanuvchi uchun "
-        f"<b>{REFERRAL_REWARD:,} so‘m</b> balansga qo‘shiladi."
+        f"💰 Har bir haqiqiy do‘st uchun "
+        f"<b>{money(REFERRAL_REWARD)} so‘m</b>."
     )
 
 
@@ -1038,68 +1172,90 @@ async def referral_handler(message: Message):
 # ============================================================
 
 @dp.message(F.text == "💳 Pul yechish")
-async def withdraw_handler(
+async def withdraw_start(
     message: Message,
     state: FSMContext
 ):
 
-    user = get_user(message.from_user.id)
+    if is_admin(message.from_user.id):
+        return
 
-    balance = user["balance"] if user else 0
+    user = user_row(
+        message.from_user.id
+    )
+
+    balance = (
+        user[3]
+        if user
+        else 0
+    )
 
     if balance < MIN_WITHDRAW:
 
         await message.answer(
             "❌ <b>Hozirgi balansingizda yetarli mablag‘ yo‘q.</b>\n\n"
             f"Pul yechish uchun kamida "
-            f"<b>{MIN_WITHDRAW:,} so‘m</b> kerak.\n\n"
+            f"<b>{money(MIN_WITHDRAW)} so‘m</b> kerak.\n\n"
             "🗳 Ko‘proq ovoz berib balansingizni to‘ldiring."
         )
+
         return
 
-    await state.set_state(UserStates.waiting_card)
+    await state.set_state(
+        UserStates.card
+    )
 
     await message.answer(
         "💳 <b>Karta raqamingizni yuboring.</b>\n\n"
         "Masalan:\n"
-        "<code>8600123456789012</code>\n\n"
-        "Karta raqamingiz admin tomonidan ko‘rib chiqiladi."
+        "<code>8600123456789012</code>"
     )
 
 
-@dp.message(UserStates.waiting_card)
+@dp.message(UserStates.card)
 async def card_received(
     message: Message,
     state: FSMContext
 ):
 
-    card = re.sub(r"\D", "", message.text or "")
+    card = re.sub(
+        r"\D",
+        "",
+        message.text or ""
+    )
 
-    if len(card) < 12 or len(card) > 19:
+    if not 12 <= len(card) <= 19:
 
         await message.answer(
             "❌ Karta raqami noto‘g‘ri.\n"
-            "Karta raqamini qaytadan yuboring."
+            "Qaytadan yuboring."
         )
+
         return
 
-    user = get_user(message.from_user.id)
+    user = user_row(
+        message.from_user.id
+    )
 
-    if not user or user["balance"] < MIN_WITHDRAW:
+    if (
+        not user
+        or user[3] < MIN_WITHDRAW
+    ):
 
         await state.clear()
 
         await message.answer(
             "❌ Balansingiz yetarli emas.",
-            reply_markup=user_keyboard()
+            reply_markup=user_kb()
         )
+
         return
 
-    amount = user["balance"]
+    amount = user[3]
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        db.execute("""
+        c.execute("""
             INSERT INTO withdrawals(
                 user_id,
                 amount,
@@ -1113,28 +1269,28 @@ async def card_received(
             card
         ))
 
-        withdrawal_id = db.execute(
+        withdrawal_id = c.execute(
             "SELECT last_insert_rowid()"
         ).fetchone()[0]
 
-        db.commit()
+        c.commit()
 
     await state.clear()
 
     await message.answer(
         "✅ <b>Pul yechish arizangiz qabul qilindi.</b>\n\n"
-        f"💰 Summa: <b>{amount:,} so‘m</b>\n"
+        f"💰 Summa: <b>{money(amount)} so‘m</b>\n"
         f"💳 Karta: <code>{card}</code>\n\n"
         "Admin arizani tekshiradi.",
-        reply_markup=user_keyboard()
+        reply_markup=user_kb()
     )
 
     admin_text = (
-        "💳 <b>Yangi pul yechish arizasi!</b>\n\n"
+        "💳 <b>YANGI PUL YECHISH ARIZASI</b>\n\n"
         f"👤 Ism: {escape(message.from_user.first_name or '')}\n"
         f"🆔 ID: <code>{message.from_user.id}</code>\n"
         f"👤 Username: @{escape(message.from_user.username or 'yo‘q')}\n"
-        f"💰 Summa: <b>{amount:,} so‘m</b>\n"
+        f"💰 Summa: <b>{money(amount)} so‘m</b>\n"
         f"💳 Karta: <code>{card}</code>\n"
         f"🆔 Ariza: <code>{withdrawal_id}</code>"
     )
@@ -1146,158 +1302,179 @@ async def card_received(
             await bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=withdrawal_keyboard(
+                reply_markup=withdraw_kb(
                     withdrawal_id
                 )
             )
 
         except Exception:
-            logger.exception("Withdrawal admin notification error")
+            pass
 
 
 # ============================================================
-# ADMIN — PUL TO‘LANDI
+# PUL TO‘LANDI
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("withdraw_paid:")
-)
-async def withdraw_paid(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("wp:"))
+async def withdrawal_paid(
+    callback: CallbackQuery
+):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
+
         await callback.answer(
             "Ruxsat yo‘q!",
             show_alert=True
         )
+
         return
 
     withdrawal_id = int(
         callback.data.split(":")[1]
     )
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        withdrawal = db.execute(
+        withdrawal = c.execute(
             "SELECT * FROM withdrawals WHERE id=?",
             (withdrawal_id,)
         ).fetchone()
 
         if not withdrawal:
+
             await callback.answer(
                 "Ariza topilmadi.",
                 show_alert=True
             )
+
             return
 
-        if withdrawal["status"] != "pending":
+        # id,user_id,amount,card,status,created
+        if withdrawal[4] != "pending":
 
             await callback.answer(
                 "Bu ariza allaqachon ko‘rib chiqilgan.",
                 show_alert=True
             )
+
             return
 
-        user = db.execute(
-            "SELECT * FROM users WHERE user_id=?",
-            (withdrawal["user_id"],)
+        user = c.execute(
+            "SELECT balance FROM users WHERE user_id=?",
+            (withdrawal[1],)
         ).fetchone()
 
-        if not user or user["balance"] < withdrawal["amount"]:
+        if (
+            not user
+            or user[0] < withdrawal[2]
+        ):
 
             await callback.answer(
-                "Foydalanuvchi balansida yetarli mablag‘ yo‘q.",
+                "Foydalanuvchi balansida mablag‘ yetarli emas.",
                 show_alert=True
             )
+
             return
 
-        db.execute("""
+        c.execute("""
             UPDATE users
             SET balance=balance-?
             WHERE user_id=?
         """, (
-            withdrawal["amount"],
-            withdrawal["user_id"]
+            withdrawal[2],
+            withdrawal[1]
         ))
 
-        db.execute("""
+        c.execute("""
             UPDATE withdrawals
             SET status='paid'
             WHERE id=?
-        """, (withdrawal_id,))
+        """, (
+            withdrawal_id,
+        ))
 
-        db.commit()
+        c.commit()
 
     await callback.message.edit_reply_markup(
         reply_markup=None
     )
 
-    await callback.message.answer(
-        "✅ Pul to‘lovi tasdiqlandi."
-    )
-
     try:
 
         await bot.send_message(
-            withdrawal["user_id"],
+            withdrawal[1],
             "✅ <b>Pul yechish arizangiz to‘landi.</b>\n\n"
-            f"💰 Summa: <b>{withdrawal['amount']:,} so‘m</b>"
+            f"💰 Summa: <b>{money(withdrawal[2])} so‘m</b>"
         )
 
     except Exception:
         pass
 
-    await callback.answer("To‘landi")
+    await callback.answer(
+        "To‘landi!"
+    )
 
 
 # ============================================================
-# ADMIN — PULNI RAD ETISH
+# PULNI RAD ETISH
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("withdraw_reject:")
-)
-async def withdraw_reject(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("wr:"))
+async def withdrawal_reject(
+    callback: CallbackQuery
+):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
+
         await callback.answer(
             "Ruxsat yo‘q!",
             show_alert=True
         )
+
         return
 
     withdrawal_id = int(
         callback.data.split(":")[1]
     )
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        withdrawal = db.execute(
+        withdrawal = c.execute(
             "SELECT * FROM withdrawals WHERE id=?",
             (withdrawal_id,)
         ).fetchone()
 
         if not withdrawal:
+
             await callback.answer(
                 "Ariza topilmadi.",
                 show_alert=True
             )
+
             return
 
-        if withdrawal["status"] != "pending":
+        if withdrawal[4] != "pending":
 
             await callback.answer(
                 "Bu ariza allaqachon ko‘rib chiqilgan.",
                 show_alert=True
             )
+
             return
 
-        db.execute("""
+        c.execute("""
             UPDATE withdrawals
             SET status='rejected'
             WHERE id=?
-        """, (withdrawal_id,))
+        """, (
+            withdrawal_id,
+        ))
 
-        db.commit()
+        c.commit()
 
     await callback.message.edit_reply_markup(
         reply_markup=None
@@ -1306,15 +1483,16 @@ async def withdraw_reject(callback: CallbackQuery):
     try:
 
         await bot.send_message(
-            withdrawal["user_id"],
-            "❌ <b>Pul yechish arizangiz rad etildi.</b>\n\n"
-            "Qo‘shimcha ma’lumot uchun admin bilan bog‘laning."
+            withdrawal[1],
+            "❌ <b>Pul yechish arizangiz rad etildi.</b>"
         )
 
     except Exception:
         pass
 
-    await callback.answer("Rad etildi")
+    await callback.answer(
+        "Rad etildi."
+    )
 
 
 # ============================================================
@@ -1327,8 +1505,11 @@ async def question_start(
     state: FSMContext
 ):
 
+    if is_admin(message.from_user.id):
+        return
+
     await state.set_state(
-        UserStates.waiting_question
+        UserStates.question
     )
 
     await message.answer(
@@ -1337,55 +1518,41 @@ async def question_start(
     )
 
 
-@dp.message(UserStates.waiting_question)
-async def question_received(
+async def send_to_admins_for_chat(
     message: Message,
-    state: FSMContext
+    text: str
 ):
-
-    text = message.text or ""
-
-    if len(text.strip()) < 2:
-
-        await message.answer(
-            "❌ Savol juda qisqa."
-        )
-        return
-
-    with closing(get_db()) as db:
-
-        db.execute("""
-            INSERT INTO support_messages(
-                user_id,
-                message,
-                direction,
-                status
-            )
-            VALUES(?,?,'user_to_admin','open')
-        """, (
-            message.from_user.id,
-            text
-        ))
-
-        db.commit()
-
-    await state.clear()
-
-    await message.answer(
-        "✅ Savolingiz adminga yuborildi.\n\n"
-        "Admin javob berganida shu yerga keladi.",
-        reply_markup=user_keyboard()
-    )
 
     user = message.from_user
 
-    admin_text = (
-        "❓ <b>Yangi savol!</b>\n\n"
-        f"👤 Ism: {escape(user.first_name or '')}\n"
-        f"🆔 ID: <code>{user.id}</code>\n"
-        f"👤 Username: @{escape(user.username or 'yo‘q')}\n\n"
-        f"💬 <b>Savol:</b>\n{escape(text)}"
-    )
+    with closing(db()) as c:
+
+        c.execute("""
+            INSERT INTO messages(
+                user_id,
+                direction,
+                text
+            )
+            VALUES(?,?,?)
+        """, (
+            user.id,
+            "user_to_admin",
+            text
+        ))
+
+        c.execute("""
+            INSERT INTO chats(
+                user_id,
+                status
+            )
+            VALUES(?, 'open')
+            ON CONFLICT(user_id)
+            DO UPDATE SET status='open'
+        """, (
+            user.id,
+        ))
+
+        c.commit()
 
     for admin_id in ADMIN_IDS:
 
@@ -1393,34 +1560,69 @@ async def question_received(
 
             await bot.send_message(
                 admin_id,
-                admin_text,
-                reply_markup=close_chat_keyboard(
-                    user.id
-                )
+                "💬 <b>FOYDALANUVCHIDAN XABAR</b>\n\n"
+                f"👤 Ism: {escape(user.first_name or '')}\n"
+                f"🆔 ID: <code>{user.id}</code>\n"
+                f"👤 Username: @{escape(user.username or 'yo‘q')}\n\n"
+                f"💬 {escape(text)}",
+                reply_markup=chat_kb(user.id)
             )
 
         except Exception:
-            logger.exception("Question notification error")
+            pass
+
+
+@dp.message(UserStates.question)
+async def question_received(
+    message: Message,
+    state: FSMContext
+):
+
+    text = (
+        message.text or ""
+    ).strip()
+
+    if not text:
+
+        await message.answer(
+            "❌ Savol matnini yuboring."
+        )
+
+        return
+
+    await state.clear()
+
+    await send_to_admins_for_chat(
+        message,
+        text
+    )
+
+    await message.answer(
+        "✅ <b>Savolingiz adminga yuborildi.</b>\n\n"
+        "Admin javobi shu yerga keladi.",
+        reply_markup=user_kb()
+    )
 
 
 # ============================================================
-# ADMIN REPLY
+# ADMIN JAVOB BERISH
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("reply_user:")
-)
-async def admin_reply_start(
+@dp.callback_query(F.data.startswith("reply:"))
+async def reply_start(
     callback: CallbackQuery,
     state: FSMContext
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
             show_alert=True
         )
+
         return
 
     user_id = int(
@@ -1432,36 +1634,50 @@ async def admin_reply_start(
     )
 
     await state.set_state(
-        AdminStates.waiting_reply
+        AdminStates.reply
     )
 
     await callback.message.answer(
-        f"💬 <b>Foydalanuvchiga javob yozing.</b>\n\n"
-        f"🆔 ID: <code>{user_id}</code>"
+        "💬 <b>Foydalanuvchiga javob yozing.</b>\n\n"
+        f"🆔 User ID: <code>{user_id}</code>"
     )
 
     await callback.answer()
 
 
-@dp.message(AdminStates.waiting_reply)
-async def admin_reply_received(
+@dp.message(AdminStates.reply)
+async def admin_reply(
     message: Message,
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     data = await state.get_data()
 
-    user_id = data.get("reply_user_id")
+    user_id = data.get(
+        "reply_user_id"
+    )
+
+    text = (
+        message.text or ""
+    ).strip()
 
     if not user_id:
 
         await state.clear()
         return
 
-    text = message.text or ""
+    if not text:
+
+        await message.answer(
+            "❌ Javob matnini yozing."
+        )
+
+        return
 
     try:
 
@@ -1471,28 +1687,44 @@ async def admin_reply_received(
             f"{escape(text)}"
         )
 
-        with closing(get_db()) as db:
+        with closing(db()) as c:
 
-            db.execute("""
-                INSERT INTO support_messages(
+            c.execute("""
+                INSERT INTO messages(
                     user_id,
                     admin_id,
-                    message,
                     direction,
-                    status
+                    text
                 )
-                VALUES(?,?,?,'admin_to_user','open')
+                VALUES(?,?,?,?)
             """, (
                 user_id,
                 message.from_user.id,
+                "admin_to_user",
                 text
             ))
 
-            db.commit()
+            c.execute("""
+                INSERT INTO chats(
+                    user_id,
+                    status,
+                    admin_id
+                )
+                VALUES(?, 'open', ?)
+                ON CONFLICT(user_id)
+                DO UPDATE SET
+                    status='open',
+                    admin_id=excluded.admin_id
+            """, (
+                user_id,
+                message.from_user.id
+            ))
+
+            c.commit()
 
         await message.answer(
-            "✅ Javob foydalanuvchiga yuborildi.",
-            reply_markup=admin_keyboard()
+            "✅ <b>Javob foydalanuvchiga yuborildi.</b>",
+            reply_markup=admin_kb()
         )
 
     except Exception:
@@ -1505,101 +1737,93 @@ async def admin_reply_received(
 
 
 # ============================================================
-# ADMIN — CHATNI YOPISH
+# SUHBATNI YOPISH
 # ============================================================
 
-@dp.callback_query(
-    F.data.startswith("close_chat:")
-)
-async def close_chat(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("close:"))
+async def close_chat(
+    callback: CallbackQuery
+):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
             show_alert=True
         )
+
         return
 
     user_id = int(
         callback.data.split(":")[1]
     )
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        db.execute("""
-            UPDATE support_messages
-            SET status='closed'
+        c.execute("""
+            UPDATE chats
+            SET status='closed',
+                admin_id=?
             WHERE user_id=?
-              AND status='open'
-        """, (user_id,))
+        """, (
+            callback.from_user.id,
+            user_id
+        ))
 
-        db.commit()
-
-    await callback.message.answer(
-        "🔒 Suhbat yopildi."
-    )
+        c.commit()
 
     try:
 
         await bot.send_message(
             user_id,
             "🔒 <b>Admin suhbatni yopdi.</b>\n\n"
-            "Yangi savol bo‘lsa, ❓ Savol-javob bo‘limidan "
-            "yana murojaat qilishingiz mumkin."
+            "Yangi savol bo‘lsa, "
+            "❓ Savol-javob bo‘limidan foydalaning."
         )
 
     except Exception:
         pass
 
-    await callback.answer("Yopildi")
+    await callback.message.answer(
+        "🔒 <b>Suhbat yopildi.</b>"
+    )
+
+    await callback.answer(
+        "Yopildi"
+    )
 
 
 # ============================================================
-# FOYDALANUVCHI ADMIN BILAN BOG‘LANISH
+# ADMIN BILAN BOG‘LANISH
 # ============================================================
 
 @dp.message(F.text == "👨‍💻 Admin bilan bog‘lanish")
-async def admin_contact_handler(message: Message):
+async def admin_contact_handler(
+    message: Message
+):
 
-    contact = get_setting(
-        "admin_contact",
-        ""
+    if is_admin(message.from_user.id):
+        return
+
+    contact = setting(
+        "admin_contact"
     )
 
-    if not contact:
+    if contact:
+
+        await message.answer(
+            "👨‍💻 <b>Admin bilan bog‘lanish:</b>\n\n"
+            f"{escape(contact)}"
+        )
+
+    else:
 
         await message.answer(
             "ℹ️ <b>Hozircha admin qo‘shilmagan.</b>\n\n"
             "Yoki hozir barcha adminlar band."
         )
-        return
-
-    await message.answer(
-        "👨‍💻 <b>Admin bilan bog‘lanish:</b>\n\n"
-        f"{escape(contact)}"
-    )
-
-
-# ============================================================
-# ADMIN PANEL
-# ============================================================
-
-@dp.message(Command("admin"))
-async def admin_command(message: Message):
-
-    if not is_admin(message.from_user.id):
-
-        await message.answer(
-            "❌ Siz admin emassiz."
-        )
-        return
-
-    await message.answer(
-        "👨‍💼 <b>Admin panel</b>\n\n"
-        "Kerakli bo‘limni tanlang:",
-        reply_markup=admin_keyboard()
-    )
 
 
 # ============================================================
@@ -1607,119 +1831,133 @@ async def admin_command(message: Message):
 # ============================================================
 
 @dp.message(F.text == "📊 Statistika")
-async def statistics_handler(message: Message):
+async def statistics(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        users = db.execute(
-            "SELECT COUNT(*) c FROM users"
-        ).fetchone()["c"]
+        users = c.execute(
+            "SELECT COUNT(*) FROM users"
+        ).fetchone()[0]
 
-        votes = db.execute(
-            "SELECT COUNT(*) c FROM votes"
-        ).fetchone()["c"]
+        votes = c.execute(
+            "SELECT COUNT(*) FROM votes"
+        ).fetchone()[0]
 
-        approved = db.execute("""
-            SELECT COUNT(*) c
+        approved = c.execute("""
+            SELECT COUNT(*)
             FROM votes
             WHERE status='approved'
-        """).fetchone()["c"]
+        """).fetchone()[0]
 
-        pending_votes = db.execute("""
-            SELECT COUNT(*) c
+        pending = c.execute("""
+            SELECT COUNT(*)
             FROM votes
             WHERE status='pending'
-        """).fetchone()["c"]
+        """).fetchone()[0]
 
-        referrals = db.execute(
-            "SELECT COUNT(*) c FROM referrals"
-        ).fetchone()["c"]
+        referrals = c.execute(
+            "SELECT COUNT(*) FROM referrals"
+        ).fetchone()[0]
 
-        referral_money = db.execute("""
-            SELECT COALESCE(SUM(reward),0) s
+        referral_money = c.execute("""
+            SELECT COALESCE(SUM(reward),0)
             FROM referrals
-        """).fetchone()["s"]
+        """).fetchone()[0]
 
-        pending_withdraw = db.execute("""
-            SELECT COUNT(*) c
+        total_balance = c.execute("""
+            SELECT COALESCE(SUM(balance),0)
+            FROM users
+        """).fetchone()[0]
+
+        pending_withdrawals = c.execute("""
+            SELECT COUNT(*)
             FROM withdrawals
             WHERE status='pending'
-        """).fetchone()["c"]
+        """).fetchone()[0]
 
-        paid_withdraw = db.execute("""
-            SELECT COALESCE(SUM(amount),0) s
+        paid_money = c.execute("""
+            SELECT COALESCE(SUM(amount),0)
             FROM withdrawals
             WHERE status='paid'
-        """).fetchone()["s"]
-
-        total_balance = db.execute("""
-            SELECT COALESCE(SUM(balance),0) s
-            FROM users
-        """).fetchone()["s"]
+        """).fetchone()[0]
 
     await message.answer(
         "📊 <b>BOT STATISTIKASI</b>\n\n"
-        f"👥 Jami foydalanuvchilar: <b>{users}</b>\n\n"
+        f"👥 Foydalanuvchilar: <b>{users}</b>\n"
         f"🗳 Jami ovozlar: <b>{votes}</b>\n"
         f"✅ Tasdiqlangan ovozlar: <b>{approved}</b>\n"
-        f"⏳ Kutilayotgan ovozlar: <b>{pending_votes}</b>\n\n"
-        f"👥 Jami referallar: <b>{referrals}</b>\n"
-        f"💰 Referal mukofotlari: <b>{referral_money:,} so‘m</b>\n\n"
+        f"⏳ Kutilayotgan ovozlar: <b>{pending}</b>\n\n"
+        f"👥 Referallar: <b>{referrals}</b>\n"
+        f"💰 Referral mukofoti: "
+        f"<b>{money(referral_money)} so‘m</b>\n\n"
         f"💵 Foydalanuvchilar balanslari: "
-        f"<b>{total_balance:,} so‘m</b>\n\n"
-        f"💳 Kutilayotgan yechishlar: "
-        f"<b>{pending_withdraw}</b>\n"
-        f"💸 To‘langan pul: <b>{paid_withdraw:,} so‘m</b>"
+        f"<b>{money(total_balance)} so‘m</b>\n\n"
+        f"💳 Kutilayotgan pul yechishlar: "
+        f"<b>{pending_withdrawals}</b>\n"
+        f"💸 To‘langan: "
+        f"<b>{money(paid_money)} so‘m</b>"
     )
 
 
 # ============================================================
-# ADMIN USERS
+# ADMIN FOYDALANUVCHILAR
 # ============================================================
 
 @dp.message(F.text == "👥 Foydalanuvchilar")
-async def users_admin(message: Message):
+async def admin_users(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        users = db.execute("""
-            SELECT user_id,
-                   first_name,
-                   username,
-                   balance,
-                   referrals
+        rows = c.execute("""
+            SELECT
+                user_id,
+                first_name,
+                username,
+                balance,
+                referrals
             FROM users
-            ORDER BY created_at DESC
-            LIMIT 20
+            ORDER BY rowid DESC
+            LIMIT 30
         """).fetchall()
 
-    if not users:
+    if not rows:
 
         await message.answer(
-            "Hozircha foydalanuvchilar yo‘q."
+            "👥 Foydalanuvchilar yo‘q."
         )
+
         return
 
-    text = "👥 <b>Oxirgi foydalanuvchilar</b>\n\n"
+    text = "👥 <b>FOYDALANUVCHILAR</b>\n\n"
 
-    for user in users:
+    for row in rows:
 
         text += (
-            f"👤 {escape(user['first_name'] or '')}\n"
-            f"🆔 <code>{user['user_id']}</code>\n"
-            f"👤 @{escape(user['username'] or 'yo‘q')}\n"
-            f"💰 {user['balance']:,} so‘m\n"
-            f"👥 Referral: {user['referrals']}\n"
-            f"──────────────\n"
+            f"👤 {escape(row[1] or '')}\n"
+            f"🆔 <code>{row[0]}</code>\n"
+            f"👤 @{escape(row[2] or 'yo‘q')}\n"
+            f"💰 {money(row[3])} so‘m\n"
+            f"👥 Referral: {row[4]}\n"
+            f"────────────\n"
         )
 
-    await message.answer(text)
+    await message.answer(
+        text
+    )
 
 
 # ============================================================
@@ -1727,18 +1965,25 @@ async def users_admin(message: Message):
 # ============================================================
 
 @dp.message(F.text == "🗳 Ovozlar")
-async def admin_votes(message: Message):
+async def admin_votes(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        rows = db.execute("""
+        rows = c.execute("""
             SELECT
-                v.*,
-                u.first_name,
-                u.username
+                v.id,
+                v.user_id,
+                v.phone,
+                v.status,
+                v.reward,
+                u.first_name
             FROM votes v
             LEFT JOIN users u
                 ON u.user_id=v.user_id
@@ -1749,44 +1994,60 @@ async def admin_votes(message: Message):
     if not rows:
 
         await message.answer(
-            "🗳 Hozircha ovozlar yo‘q."
+            "🗳 Ovozlar yo‘q."
         )
-        return
 
-    text = "🗳 <b>Ovozlar</b>\n\n"
+        return
 
     for row in rows:
 
-        text += (
-            f"🆔 {row['id']}\n"
-            f"👤 {escape(row['first_name'] or '')}\n"
-            f"📱 {escape(row['phone'] or '-')}\n"
-            f"📌 Tur: {row['vote_type']}\n"
-            f"📊 Holat: {row['status']}\n"
-            f"💰 {row['reward']:,} so‘m\n"
-            f"────────────\n"
+        text = (
+            f"🗳 <b>Ovoz #{row[0]}</b>\n\n"
+            f"👤 {escape(row[5] or '')}\n"
+            f"🆔 <code>{row[1]}</code>\n"
+            f"📞 <code>{escape(row[2] or '-')}</code>\n"
+            f"📊 Holat: <b>{row[3]}</b>\n"
+            f"💰 {money(row[4])} so‘m"
         )
 
-    await message.answer(text)
+        keyboard = None
+
+        if row[3] == "pending":
+
+            keyboard = vote_admin_kb(
+                row[0]
+            )
+
+        await message.answer(
+            text,
+            reply_markup=keyboard
+        )
 
 
 # ============================================================
-# ADMIN TELEFON OVOZLARI
+# TELEFON OVOZLARI
 # ============================================================
 
 @dp.message(F.text == "📱 Telefon ovozlari")
-async def admin_phone_votes(message: Message):
+async def admin_phone_votes(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        rows = db.execute("""
+        rows = c.execute("""
             SELECT
-                v.*,
-                u.first_name,
-                u.username
+                v.id,
+                v.user_id,
+                v.phone,
+                v.status,
+                v.reward,
+                u.first_name
             FROM votes v
             LEFT JOIN users u
                 ON u.user_id=v.user_id
@@ -1798,99 +2059,109 @@ async def admin_phone_votes(message: Message):
     if not rows:
 
         await message.answer(
-            "📱 Telefon orqali ovozlar mavjud emas."
+            "📱 Telefon ovozlari yo‘q."
         )
+
         return
 
     for row in rows:
 
-        text = (
-            "📱 <b>Telefon ovozi</b>\n\n"
-            f"🆔 Ovoz: <code>{row['id']}</code>\n"
-            f"👤 Ism: {escape(row['first_name'] or '')}\n"
-            f"🆔 User ID: <code>{row['user_id']}</code>\n"
-            f"📞 Telefon: <code>{escape(row['phone'] or '')}</code>\n"
-            f"📊 Holat: <b>{row['status']}</b>\n"
-            f"💰 Mukofot: {row['reward']:,} so‘m"
-        )
-
         keyboard = None
 
-        if row["status"] == "pending":
+        if row[3] == "pending":
 
-            keyboard = vote_admin_keyboard(
-                row["id"]
+            keyboard = vote_admin_kb(
+                row[0]
             )
 
         await message.answer(
-            text,
+            f"📱 <b>Telefon ovozi #{row[0]}</b>\n\n"
+            f"👤 {escape(row[5] or '')}\n"
+            f"🆔 <code>{row[1]}</code>\n"
+            f"📞 <code>{escape(row[2] or '')}</code>\n"
+            f"📊 Holat: <b>{row[3]}</b>\n"
+            f"💰 {money(row[4])} so‘m",
             reply_markup=keyboard
         )
 
 
 # ============================================================
-# ADMIN REFERALLAR
+# REFERALLAR
 # ============================================================
 
 @dp.message(F.text == "👥 Referallar")
-async def admin_referrals(message: Message):
+async def admin_referrals(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        rows = db.execute("""
+        rows = c.execute("""
             SELECT
-                r.*,
-                u.first_name,
-                u.username
-            FROM referrals r
-            LEFT JOIN users u
-                ON u.user_id=r.inviter_id
-            ORDER BY r.id DESC
-            LIMIT 30
+                inviter_id,
+                invited_id,
+                reward
+            FROM referrals
+            ORDER BY id DESC
+            LIMIT 50
         """).fetchall()
 
     if not rows:
 
         await message.answer(
-            "👥 Hozircha referallar yo‘q."
+            "👥 Referallar yo‘q."
         )
+
         return
 
-    text = "👥 <b>Referallar</b>\n\n"
+    text = "👥 <b>REFERALLAR</b>\n\n"
 
     for row in rows:
 
         text += (
             f"👤 Taklif qiluvchi: "
-            f"{escape(row['first_name'] or '')}\n"
-            f"🆔 ID: <code>{row['inviter_id']}</code>\n"
-            f"🎁 Mukofot: {row['reward']:,} so‘m\n"
+            f"<code>{row[0]}</code>\n"
+            f"👤 Taklif qilingan: "
+            f"<code>{row[1]}</code>\n"
+            f"💰 Mukofot: "
+            f"{money(row[2])} so‘m\n"
             f"────────────\n"
         )
 
-    await message.answer(text)
+    await message.answer(
+        text
+    )
 
 
 # ============================================================
-# ADMIN PUL YECHISHLAR
+# PUL YECHISH ARIZALARI
 # ============================================================
 
 @dp.message(F.text == "💳 Pul yechishlar")
-async def admin_withdrawals(message: Message):
+async def admin_withdrawals(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        rows = db.execute("""
+        rows = c.execute("""
             SELECT
-                w.*,
-                u.first_name,
-                u.username
+                w.id,
+                w.user_id,
+                w.amount,
+                w.card_number,
+                w.status,
+                u.first_name
             FROM withdrawals w
             LEFT JOIN users u
                 ON u.user_id=w.user_id
@@ -1903,47 +2174,508 @@ async def admin_withdrawals(message: Message):
         await message.answer(
             "💳 Pul yechish arizalari yo‘q."
         )
+
         return
 
     for row in rows:
 
-        text = (
-            "💳 <b>Pul yechish arizasi</b>\n\n"
-            f"🆔 Ariza: <code>{row['id']}</code>\n"
-            f"👤 {escape(row['first_name'] or '')}\n"
-            f"🆔 User ID: <code>{row['user_id']}</code>\n"
-            f"💰 Summa: <b>{row['amount']:,} so‘m</b>\n"
-            f"💳 Karta: <code>{row['card_number']}</code>\n"
-            f"📊 Holat: <b>{row['status']}</b>"
-        )
-
         keyboard = None
 
-        if row["status"] == "pending":
+        if row[4] == "pending":
 
-            keyboard = withdrawal_keyboard(
-                row["id"]
+            keyboard = withdraw_kb(
+                row[0]
             )
 
         await message.answer(
-            text,
+            f"💳 <b>Ariza #{row[0]}</b>\n\n"
+            f"👤 {escape(row[5] or '')}\n"
+            f"🆔 <code>{row[1]}</code>\n"
+            f"💰 {money(row[2])} so‘m\n"
+            f"💳 <code>{row[3]}</code>\n"
+            f"📊 Holat: <b>{row[4]}</b>",
             reply_markup=keyboard
         )
 
 
 # ============================================================
-# ADMIN SAVOLLAR
+# ADMIN SAVOLLARI
 # ============================================================
 
 @dp.message(F.text == "❓ Savollar")
-async def admin_questions(message: Message):
+async def admin_questions(
+    message: Message
+):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
-    with closing(get_db()) as db:
+    with closing(db()) as c:
 
-        rows = db.execute("""
+        rows = c.execute("""
             SELECT
-                s.*,
-               
+                m.user_id,
+                m.text,
+                m.created_at,
+                u.first_name
+            FROM messages m
+            LEFT JOIN users u
+                ON u.user_id=m.user_id
+            WHERE m.direction='user_to_admin'
+            ORDER BY m.id DESC
+            LIMIT 30
+        """).fetchall()
+
+    if not rows:
+
+        await message.answer(
+            "❓ Savollar yo‘q."
+        )
+
+        return
+
+    for row in rows:
+
+        await message.answer(
+            "❓ <b>FOYDALANUVCHI SAVOLI</b>\n\n"
+            f"👤 {escape(row[3] or '')}\n"
+            f"🆔 <code>{row[0]}</code>\n\n"
+            f"💬 {escape(row[1])}",
+            reply_markup=chat_kb(
+                row[0]
+            )
+        )
+
+
+# ============================================================
+# OVOZ HAVOLASINI SOZLASH
+# ============================================================
+
+@dp.message(F.text == "🔗 Ovoz havolasi")
+async def vote_url_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await state.set_state(
+        AdminStates.vote_url
+    )
+
+    await message.answer(
+        "🔗 <b>Yangi ovoz havolasini yuboring.</b>\n\n"
+        f"Hozirgi havola:\n"
+        f"{escape(setting('vote_url', 'Hali qo‘shilmagan'))}"
+    )
+
+
+@dp.message(AdminStates.vote_url)
+async def vote_url_save(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    url = (
+        message.text or ""
+    ).strip()
+
+    if not re.match(
+        r"^https?://",
+        url
+    ):
+
+        await message.answer(
+            "❌ Havola http:// yoki https:// bilan boshlanishi kerak."
+        )
+
+        return
+
+    set_setting(
+        "vote_url",
+        url
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Ovoz havolasi saqlandi.</b>",
+        reply_markup=admin_kb()
+    )
+
+
+# ============================================================
+# ADMIN KONTAKTINI SOZLASH
+# ============================================================
+
+@dp.message(F.text == "👨‍💻 Admin kontakt")
+async def contact_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await state.set_state(
+        AdminStates.contact
+    )
+
+    await message.answer(
+        "👨‍💻 <b>Admin Telegram username yoki "
+        "telefon raqamini yuboring.</b>\n\n"
+        f"Hozirgi:\n"
+        f"{escape(setting('admin_contact', 'Hali qo‘shilmagan'))}"
+    )
+
+
+@dp.message(AdminStates.contact)
+async def contact_save(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    contact = (
+        message.text or ""
+    ).strip()
+
+    if not contact:
+
+        await message.answer(
+            "❌ Kontaktni yozing."
+        )
+
+        return
+
+    set_setting(
+        "admin_contact",
+        contact
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Admin kontakti saqlandi.</b>",
+        reply_markup=admin_kb()
+    )
+
+
+# ============================================================
+# LOYIHA QO‘SHISH
+# ============================================================
+
+@dp.message(F.text == "➕ Loyiha qo‘shish")
+async def project_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await state.set_state(
+        AdminStates.project_name
+    )
+
+    await message.answer(
+        "➕ <b>Loyiha nomini yozing.</b>"
+    )
+
+
+@dp.message(AdminStates.project_name)
+async def project_name_received(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    name = (
+        message.text or ""
+    ).strip()
+
+    if not name:
+
+        await message.answer(
+            "❌ Loyiha nomini yozing."
+        )
+
+        return
+
+    await state.update_data(
+        project_name=name
+    )
+
+    await state.set_state(
+        AdminStates.project_url
+    )
+
+    await message.answer(
+        "🔗 <b>Endi loyiha havolasini yuboring.</b>\n\n"
+        "Masalan:\n"
+        "<code>https://example.com</code>"
+    )
+
+
+@dp.message(AdminStates.project_url)
+async def project_url_received(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    url = (
+        message.text or ""
+    ).strip()
+
+    if not re.match(
+        r"^https?://",
+        url
+    ):
+
+        await message.answer(
+            "❌ Havola http:// yoki https:// bilan boshlanishi kerak."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    name = data.get(
+        "project_name"
+    )
+
+    if not name:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Loyiha ma’lumoti topilmadi."
+        )
+
+        return
+
+    with closing(db()) as c:
+
+        c.execute("""
+            INSERT INTO projects(
+                name,
+                url,
+                active
+            )
+            VALUES(?,?,1)
+        """, (
+            name,
+            url
+        ))
+
+        c.commit()
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Loyiha muvaffaqiyatli qo‘shildi.</b>\n\n"
+        f"📌 {escape(name)}\n"
+        f"🔗 {escape(url)}",
+        reply_markup=admin_kb()
+    )
+
+
+# ============================================================
+# REKLAMA
+# ============================================================
+
+@dp.message(F.text == "📢 Reklama")
+async def broadcast_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await state.set_state(
+        AdminStates.broadcast
+    )
+
+    await message.answer(
+        "📢 <b>Yuboriladigan xabarni yozing.</b>"
+    )
+
+
+@dp.message(AdminStates.broadcast)
+async def broadcast_received(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    text = (
+        message.text or ""
+    ).strip()
+
+    if not text:
+
+        await message.answer(
+            "❌ Xabar matnini yuboring."
+        )
+
+        return
+
+    with closing(db()) as c:
+
+        users = c.execute(
+            "SELECT user_id FROM users"
+        ).fetchall()
+
+    sent = 0
+    failed = 0
+
+    for row in users:
+
+        try:
+
+            await bot.send_message(
+                row[0],
+                text
+            )
+
+            sent += 1
+
+            await asyncio.sleep(
+                0.05
+            )
+
+        except Exception:
+
+            failed += 1
+
+    await state.clear()
+
+    await message.answer(
+        "📢 <b>Reklama yakunlandi.</b>\n\n"
+        f"✅ Yuborildi: <b>{sent}</b>\n"
+        f"❌ Yuborilmadi: <b>{failed}</b>",
+        reply_markup=admin_kb()
+    )
+
+
+# ============================================================
+# OCHIQ CHATDA FOYDALANUVCHI JAVOBI
+# ============================================================
+
+@dp.message()
+async def remaining_messages(
+    message: Message
+):
+
+    if is_admin(
+        message.from_user.id
+    ):
+        return
+
+    with closing(db()) as c:
+
+        chat = c.execute("""
+            SELECT status
+            FROM chats
+            WHERE user_id=?
+        """, (
+            message.from_user.id,
+        )).fetchone()
+
+    if not chat:
+        return
+
+    if chat[0] != "open":
+        return
+
+    text = (
+        message.text or ""
+    ).strip()
+
+    if not text:
+        return
+
+    await send_to_admins_for_chat(
+        message,
+        text
+    )
+
+
+# ============================================================
+# ISHGA TUSHIRISH
+# ============================================================
+
+async def main():
+
+    if (
+        not BOT_TOKEN
+        or BOT_TOKEN == "TOKENINGIZNI_SHU_YERGA_QOYING"
+    ):
+
+        raise RuntimeError(
+            "BOT_TOKEN main.py ichiga qo‘yilmagan!"
+        )
+
+    if (
+        not ADMIN_IDS
+        or ADMIN_IDS == {123456789}
+    ):
+
+        raise RuntimeError(
+            "ADMIN_IDS ichiga haqiqiy Telegram ID qo‘yilmagan!"
+        )
+
+    init_db()
+
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
+
+    logger.info(
+        "BOT ISHLADI"
+    )
+
+    await dp.start_polling(
+        bot
+    )
+
+
+if __name__ == "__main__":
+
+    asyncio.run(
+        main()
+    )
