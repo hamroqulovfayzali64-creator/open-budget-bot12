@@ -4,7 +4,6 @@ import re
 import sqlite3
 from contextlib import closing
 from html import escape
-from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -18,40 +17,18 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
 )
-
 
 # ============================================================
 # SOZLAMALAR
 # ============================================================
 
-# ============================================================
 # BOT TOKENINI SHU YERGA QO'YING
-# YANGI TOKENNI YOZING
-# ============================================================
-
 BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
 
-
-# ============================================================
 # ADMIN TELEGRAM ID
-# ============================================================
-
 ADMIN_IDS = {7998053914}
-
-
-# ============================================================
-# ISBOT KANALI
-# ============================================================
-# Masalan:
-# https://t.me/kanal_nomi
-#
-# Shu yerga o'zingizning isbot kanalingiz havolasini yozing.
-# ============================================================
-
-ISBOT_KANAL_URL = "https://t.me/SIZNING_ISBOT_KANALINGIZ"
-
 
 DB_NAME = "bot.db"
 
@@ -103,6 +80,7 @@ class AdminStates(StatesGroup):
     vote_url = State()
     contact = State()
     broadcast = State()
+    proof_channel = State()
 
 
 # ============================================================
@@ -265,6 +243,7 @@ def add_user(user, referred_by=None):
             ))
 
             c.commit()
+
             return False
 
         if referred_by == user.id:
@@ -334,6 +313,17 @@ def valid_phone(value):
     )
 
 
+def valid_url(value):
+
+    return bool(
+        re.match(
+            r"^https?://",
+            (value or "").strip(),
+            re.IGNORECASE
+        )
+    )
+
+
 # ============================================================
 # FOYDALANUVCHI MENYUSI
 # ============================================================
@@ -347,12 +337,12 @@ def user_kb():
                 KeyboardButton(text="🗳 Ovoz berish")
             ],
             [
-                KeyboardButton(text="💰 Balans"),
-                KeyboardButton(text="💳 Pul yechish")
+                KeyboardButton(text="📢 Isbot kanali"),
+                KeyboardButton(text="💰 Balans")
             ],
             [
-                KeyboardButton(text="👥 Do‘stlarni taklif qilish"),
-                KeyboardButton(text="🛡 Isbot kanali")
+                KeyboardButton(text="💳 Pul yechish"),
+                KeyboardButton(text="👥 Do‘stlarni taklif qilish")
             ],
             [
                 KeyboardButton(text="❓ Savol-javob"),
@@ -390,10 +380,13 @@ def admin_kb():
             ],
             [
                 KeyboardButton(text="👨‍💻 Admin kontakt"),
-                KeyboardButton(text="➕ Loyiha qo‘shish")
+                KeyboardButton(text="📢 Isbot kanali")
             ],
             [
-                KeyboardButton(text="📌 Loyihalar"),
+                KeyboardButton(text="➕ Loyiha qo‘shish"),
+                KeyboardButton(text="📌 Loyihalar")
+            ],
+            [
                 KeyboardButton(text="📢 Reklama")
             ],
             [
@@ -516,10 +509,13 @@ async def start_handler(
         if code.startswith("ref_"):
 
             try:
+
                 referred_by = int(
                     code[4:]
                 )
+
             except ValueError:
+
                 referred_by = None
 
     is_new = add_user(
@@ -582,6 +578,7 @@ async def start_handler(
                     )
 
                 except Exception:
+
                     pass
 
     await message.answer(
@@ -599,11 +596,14 @@ async def start_handler(
 @dp.message(Command("admin"))
 async def admin_command(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
 
         await message.answer(
             "❌ Siz admin emassiz."
         )
+
         return
 
     await message.answer(
@@ -619,7 +619,9 @@ async def admin_command(message: Message):
 @dp.message(F.text == "🏠 Foydalanuvchi menyusi")
 async def user_menu(message: Message):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     await message.answer(
@@ -632,31 +634,104 @@ async def user_menu(message: Message):
 # ISBOT KANALI
 # ============================================================
 
-@dp.message(F.text == "🛡 Isbot kanali")
+@dp.message(F.text == "📢 Isbot kanali")
 async def proof_channel_handler(
-    message: Message
+    message: Message,
+    state: FSMContext
 ):
 
+    # ADMIN
     if is_admin(message.from_user.id):
+
+        await state.set_state(
+            AdminStates.proof_channel
+        )
+
+        current = setting(
+            "proof_channel",
+            "Hali qo‘shilmagan"
+        )
+
+        await message.answer(
+            "📢 <b>ISBOT KANALINI SOZLASH</b>\n\n"
+            "Telegram kanal havolasini yuboring.\n\n"
+            "Masalan:\n"
+            "<code>https://t.me/kanal_nomi</code>\n\n"
+            f"📌 Hozirgi havola:\n"
+            f"{escape(current)}"
+        )
+
+        return
+
+    # USER
+    url = setting(
+        "proof_channel"
+    )
+
+    if not url:
+
+        await message.answer(
+            "❌ <b>Isbot kanali hali admin tomonidan qo‘shilmagan.</b>",
+            reply_markup=user_kb()
+        )
+
         return
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🛡 Isbot kanaliga kirish",
-                    url=ISBOT_KANAL_URL
+                    text="📢 Isbot kanaliga kirish",
+                    url=url
                 )
             ]
         ]
     )
 
     await message.answer(
-        "🛡 <b>ISBOT KANALI</b>\n\n"
-        "Bu kanalda ovozlar, to‘lovlar va boshqa "
-        "natijalar bo‘yicha isbotlar joylab boriladi.\n\n"
-        "Kanalga kirish uchun quyidagi tugmani bosing:",
+        "📢 <b>ISBOT KANALI</b>\n\n"
+        "Ovozlar va tasdiqlangan ma’lumotlarni "
+        "isbot kanalimizdan ko‘rishingiz mumkin.",
         reply_markup=keyboard
+    )
+
+
+@dp.message(AdminStates.proof_channel)
+async def proof_channel_save(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    url = (
+        message.text or ""
+    ).strip()
+
+    if not valid_url(url):
+
+        await message.answer(
+            "❌ Havola noto‘g‘ri.\n\n"
+            "Masalan:\n"
+            "<code>https://t.me/kanal_nomi</code>"
+        )
+
+        return
+
+    set_setting(
+        "proof_channel",
+        url
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Isbot kanali muvaffaqiyatli saqlandi.</b>\n\n"
+        f"📢 {escape(url)}",
+        reply_markup=admin_kb()
     )
 
 
@@ -676,7 +751,9 @@ async def projects_handler(message: Message):
             ORDER BY id DESC
         """).fetchall()
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
 
         if not rows:
 
@@ -695,7 +772,7 @@ async def projects_handler(message: Message):
                 f"🆔 {row[0]}\n"
                 f"📌 {escape(row[1])}\n"
                 f"🔗 {escape(row[2] or '-')}\n"
-                f"────────────\n"
+                "────────────\n"
             )
 
         await message.answer(
@@ -754,7 +831,9 @@ async def projects_handler(message: Message):
 @dp.message(F.text == "🗳 Ovoz berish")
 async def vote_start(message: Message):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     await message.answer(
@@ -772,7 +851,9 @@ async def vote_link_callback(
     callback: CallbackQuery
 ):
 
-    url = setting("vote_url")
+    url = setting(
+        "vote_url"
+    )
 
     if not url:
 
@@ -795,7 +876,7 @@ async def vote_link_callback(
         )
 
         await callback.message.answer(
-            "🔗 <b>Ovoz berish uchun quyidagi tugmani bosing:</b>",
+            "🔗 <b>Ovoz berish havolasi:</b>",
             reply_markup=keyboard
         )
 
@@ -927,7 +1008,9 @@ async def phone_received(
             await bot.send_message(
                 admin_id,
                 admin_text,
-                reply_markup=vote_admin_kb(vote_id)
+                reply_markup=vote_admin_kb(
+                    vote_id
+                )
             )
 
         except Exception:
@@ -946,7 +1029,9 @@ async def vote_approve(
     callback: CallbackQuery
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -956,14 +1041,18 @@ async def vote_approve(
         return
 
     try:
+
         vote_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
+
         await callback.answer(
             "Noto‘g‘ri ovoz ID.",
             show_alert=True
         )
+
         return
 
     with closing(db()) as c:
@@ -1065,6 +1154,7 @@ async def vote_approve(
         )
 
     except Exception:
+
         pass
 
     await callback.answer(
@@ -1081,7 +1171,9 @@ async def vote_reject(
     callback: CallbackQuery
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -1091,14 +1183,18 @@ async def vote_reject(
         return
 
     try:
+
         vote_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
+
         await callback.answer(
             "Noto‘g‘ri ovoz ID.",
             show_alert=True
         )
+
         return
 
     with closing(db()) as c:
@@ -1149,6 +1245,7 @@ async def vote_reject(
         )
 
     except Exception:
+
         pass
 
     await callback.answer(
@@ -1165,7 +1262,9 @@ async def balance_handler(
     message: Message
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     user = user_row(
@@ -1192,7 +1291,7 @@ async def balance_handler(
 
 
 # ============================================================
-# REFERAL / DO‘STLARNI TAKLIF QILISH
+# DO‘STLARNI TAKLIF QILISH
 # ============================================================
 
 @dp.message(F.text == "👥 Do‘stlarni taklif qilish")
@@ -1200,74 +1299,65 @@ async def referral_handler(
     message: Message
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
-    try:
+    me = await bot.get_me()
 
-        me = await bot.get_me()
+    if not me.username:
 
-        if not me.username:
-
-            await message.answer(
-                "❌ Bot username'i aniqlanmadi."
-            )
-
-            return
-
-        link = (
-            f"https://t.me/{me.username}"
-            f"?start=ref_{message.from_user.id}"
+        await message.answer(
+            "❌ Bot username'i aniqlanmadi."
         )
 
-        user = user_row(
-            message.from_user.id
-        )
+        return
 
-        referrals = (
-            user[4]
-            if user
-            else 0
-        )
+    link = (
+        f"https://t.me/{me.username}"
+        f"?start=ref_{message.from_user.id}"
+    )
 
-        share_url = (
-            "https://t.me/share/url"
-            f"?url={quote(link, safe='')}"
-            f"&text={quote('🎁 Botga qo‘shiling va bonus oling!')}"
-        )
+    user = user_row(
+        message.from_user.id
+    )
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="👥 Do‘stlarni tanlash",
-                        url=share_url
-                    )
-                ]
+    referrals = (
+        user[4]
+        if user
+        else 0
+    )
+
+    # Telegram avtomatik ulashish oynasi.
+    share_url = (
+        "https://t.me/share/url"
+        "?url=" + link +
+        "&text=Do‘stimning botiga qo‘shiling!"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📨 Do‘stlarni tanlash",
+                    url=share_url
+                )
             ]
-        )
+        ]
+    )
 
-        await message.answer(
-            "👥 <b>DO‘STLARNI TAKLIF QILISH</b>\n\n"
-            "Quyidagi tugmani bosing va Telegram orqali "
-            "do‘stlaringizni tanlab bot havolasini yuboring.\n\n"
-            f"🔗 Sizning referral havolangiz:\n"
-            f"<code>{escape(link)}</code>\n\n"
-            f"👥 Taklif qilinganlar: <b>{referrals}</b>\n"
-            f"💰 Har bir haqiqiy do‘st uchun "
-            f"<b>{money(REFERRAL_REWARD)} so‘m</b>.",
-            reply_markup=keyboard
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Referral error"
-        )
-
-        await message.answer(
-            "❌ Taklif havolasini yaratishda xatolik yuz berdi."
-        )
+    await message.answer(
+        "👥 <b>DO‘STLARNI TAKLIF QILISH</b>\n\n"
+        "Quyidagi tugmani bosing va Telegramdagi "
+        "do‘stlaringizni tanlab taklif yuboring.\n\n"
+        f"🔗 Sizning taklif havolangiz:\n"
+        f"<code>{escape(link)}</code>\n\n"
+        f"👥 Taklif qilinganlar: <b>{referrals}</b>\n"
+        f"💰 Har bir haqiqiy do‘st uchun "
+        f"<b>{money(REFERRAL_REWARD)} so‘m</b>.",
+        reply_markup=keyboard
+    )
 
 
 # ============================================================
@@ -1280,7 +1370,9 @@ async def withdraw_start(
     state: FSMContext
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     user = user_row(
@@ -1411,6 +1503,7 @@ async def card_received(
             )
 
         except Exception:
+
             pass
 
 
@@ -1423,7 +1516,9 @@ async def withdrawal_paid(
     callback: CallbackQuery
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -1433,9 +1528,11 @@ async def withdrawal_paid(
         return
 
     try:
+
         withdrawal_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
@@ -1519,6 +1616,7 @@ async def withdrawal_paid(
         )
 
     except Exception:
+
         pass
 
     await callback.answer(
@@ -1535,7 +1633,9 @@ async def withdrawal_reject(
     callback: CallbackQuery
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -1545,9 +1645,11 @@ async def withdrawal_reject(
         return
 
     try:
+
         withdrawal_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
@@ -1604,6 +1706,7 @@ async def withdrawal_reject(
         )
 
     except Exception:
+
         pass
 
     await callback.answer(
@@ -1621,7 +1724,9 @@ async def question_start(
     state: FSMContext
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     await state.set_state(
@@ -1685,6 +1790,7 @@ async def send_to_admins_for_chat(
             )
 
         except Exception:
+
             pass
 
 
@@ -1721,7 +1827,7 @@ async def question_received(
 
 
 # ============================================================
-# ADMIN JAVOB BERISH
+# ADMIN JAVOB
 # ============================================================
 
 @dp.callback_query(F.data.startswith("reply:"))
@@ -1730,7 +1836,9 @@ async def reply_start(
     state: FSMContext
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -1740,9 +1848,11 @@ async def reply_start(
         return
 
     try:
+
         user_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
@@ -1774,7 +1884,9 @@ async def admin_reply(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     data = await state.get_data()
@@ -1790,6 +1902,7 @@ async def admin_reply(
     if not user_id:
 
         await state.clear()
+
         return
 
     if not text:
@@ -1866,7 +1979,9 @@ async def close_chat(
     callback: CallbackQuery
 ):
 
-    if not is_admin(callback.from_user.id):
+    if not is_admin(
+        callback.from_user.id
+    ):
 
         await callback.answer(
             "Ruxsat yo‘q!",
@@ -1876,9 +1991,11 @@ async def close_chat(
         return
 
     try:
+
         user_id = int(
             callback.data.split(":")[1]
         )
+
     except (ValueError, IndexError):
 
         await callback.answer(
@@ -1912,6 +2029,7 @@ async def close_chat(
         )
 
     except Exception:
+
         pass
 
     await callback.message.answer(
@@ -1924,7 +2042,7 @@ async def close_chat(
 
 
 # ============================================================
-# ADMIN BILAN BOG‘LANISH
+# ADMIN KONTAKT
 # ============================================================
 
 @dp.message(F.text == "👨‍💻 Admin bilan bog‘lanish")
@@ -1932,7 +2050,9 @@ async def admin_contact_handler(
     message: Message
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     contact = setting(
@@ -1954,8 +2074,67 @@ async def admin_contact_handler(
         )
 
 
+@dp.message(F.text == "👨‍💻 Admin kontakt")
+async def contact_start(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await state.set_state(
+        AdminStates.contact
+    )
+
+    await message.answer(
+        "👨‍💻 <b>Admin Telegram username yoki "
+        "telefon raqamini yuboring.</b>\n\n"
+        f"Hozirgi:\n"
+        f"{escape(setting('admin_contact', 'Hali qo‘shilmagan'))}"
+    )
+
+
+@dp.message(AdminStates.contact)
+async def contact_save(
+    message: Message,
+    state: FSMContext
+):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    contact = (
+        message.text or ""
+    ).strip()
+
+    if not contact:
+
+        await message.answer(
+            "❌ Kontaktni yozing."
+        )
+
+        return
+
+    set_setting(
+        "admin_contact",
+        contact
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Admin kontakti saqlandi.</b>",
+        reply_markup=admin_kb()
+    )
+
+
 # ============================================================
-# ADMIN STATISTIKA
+# STATISTIKA
 # ============================================================
 
 @dp.message(F.text == "📊 Statistika")
@@ -1963,7 +2142,9 @@ async def statistics(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2033,7 +2214,7 @@ async def statistics(
 
 
 # ============================================================
-# ADMIN FOYDALANUVCHILAR
+# FOYDALANUVCHILAR
 # ============================================================
 
 @dp.message(F.text == "👥 Foydalanuvchilar")
@@ -2041,7 +2222,9 @@ async def admin_users(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2076,7 +2259,7 @@ async def admin_users(
             f"👤 @{escape(row[2] or 'yo‘q')}\n"
             f"💰 {money(row[3])} so‘m\n"
             f"👥 Referral: {row[4]}\n"
-            f"────────────\n"
+            "────────────\n"
         )
 
     await message.answer(
@@ -2093,7 +2276,9 @@ async def admin_votes(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2123,6 +2308,14 @@ async def admin_votes(
 
     for row in rows:
 
+        keyboard = None
+
+        if row[3] == "pending":
+
+            keyboard = vote_admin_kb(
+                row[0]
+            )
+
         text = (
             f"🗳 <b>Ovoz #{row[0]}</b>\n\n"
             f"👤 {escape(row[5] or '')}\n"
@@ -2131,14 +2324,6 @@ async def admin_votes(
             f"📊 Holat: <b>{row[3]}</b>\n"
             f"💰 {money(row[4])} so‘m"
         )
-
-        keyboard = None
-
-        if row[3] == "pending":
-
-            keyboard = vote_admin_kb(
-                row[0]
-            )
 
         await message.answer(
             text,
@@ -2155,7 +2340,9 @@ async def admin_phone_votes(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2214,7 +2401,9 @@ async def admin_referrals(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2248,7 +2437,7 @@ async def admin_referrals(
             f"<code>{row[1]}</code>\n"
             f"💰 Mukofot: "
             f"{money(row[2])} so‘m\n"
-            f"────────────\n"
+            "────────────\n"
         )
 
     await message.answer(
@@ -2265,7 +2454,9 @@ async def admin_withdrawals(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2323,7 +2514,9 @@ async def admin_questions(
     message: Message
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2357,12 +2550,14 @@ async def admin_questions(
             f"👤 {escape(row[3] or '')}\n"
             f"🆔 <code>{row[0]}</code>\n\n"
             f"💬 {escape(row[1])}",
-            reply_markup=chat_kb(row[0])
+            reply_markup=chat_kb(
+                row[0]
+            )
         )
 
 
 # ============================================================
-# OVOZ HAVOLASINI SOZLASH
+# OVOZ HAVOLASI
 # ============================================================
 
 @dp.message(F.text == "🔗 Ovoz havolasi")
@@ -2371,7 +2566,9 @@ async def vote_url_start(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     await state.set_state(
@@ -2391,17 +2588,16 @@ async def vote_url_save(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     url = (
         message.text or ""
     ).strip()
 
-    if not re.match(
-        r"^https?://",
-        url
-    ):
+    if not valid_url(url):
 
         await message.answer(
             "❌ Havola http:// yoki https:// bilan boshlanishi kerak."
@@ -2423,65 +2619,6 @@ async def vote_url_save(
 
 
 # ============================================================
-# ADMIN KONTAKTINI SOZLASH
-# ============================================================
-
-@dp.message(F.text == "👨‍💻 Admin kontakt")
-async def contact_start(
-    message: Message,
-    state: FSMContext
-):
-
-    if not is_admin(message.from_user.id):
-        return
-
-    await state.set_state(
-        AdminStates.contact
-    )
-
-    await message.answer(
-        "👨‍💻 <b>Admin Telegram username yoki "
-        "telefon raqamini yuboring.</b>\n\n"
-        f"Hozirgi:\n"
-        f"{escape(setting('admin_contact', 'Hali qo‘shilmagan'))}"
-    )
-
-
-@dp.message(AdminStates.contact)
-async def contact_save(
-    message: Message,
-    state: FSMContext
-):
-
-    if not is_admin(message.from_user.id):
-        return
-
-    contact = (
-        message.text or ""
-    ).strip()
-
-    if not contact:
-
-        await message.answer(
-            "❌ Kontaktni yozing."
-        )
-
-        return
-
-    set_setting(
-        "admin_contact",
-        contact
-    )
-
-    await state.clear()
-
-    await message.answer(
-        "✅ <b>Admin kontakti saqlandi.</b>",
-        reply_markup=admin_kb()
-    )
-
-
-# ============================================================
 # LOYIHA QO‘SHISH
 # ============================================================
 
@@ -2491,7 +2628,9 @@ async def project_start(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     await state.set_state(
@@ -2509,7 +2648,9 @@ async def project_name_received(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     name = (
@@ -2545,17 +2686,16 @@ async def project_url_received(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     url = (
         message.text or ""
     ).strip()
 
-    if not re.match(
-        r"^https?://",
-        url
-    ):
+    if not valid_url(url):
 
         await message.answer(
             "❌ Havola http:// yoki https:// bilan boshlanishi kerak."
@@ -2615,7 +2755,9 @@ async def broadcast_start(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     await state.set_state(
@@ -2633,7 +2775,9 @@ async def broadcast_received(
     state: FSMContext
 ):
 
-    if not is_admin(message.from_user.id):
+    if not is_admin(
+        message.from_user.id
+    ):
         return
 
     text = (
@@ -2668,7 +2812,9 @@ async def broadcast_received(
 
             sent += 1
 
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(
+                0.05
+            )
 
         except Exception:
 
@@ -2685,7 +2831,7 @@ async def broadcast_received(
 
 
 # ============================================================
-# OCHIQ CHATDA FOYDALANUVCHI JAVOBI
+# OCHIQ CHAT
 # ============================================================
 
 @dp.message()
@@ -2693,7 +2839,9 @@ async def remaining_messages(
     message: Message
 ):
 
-    if is_admin(message.from_user.id):
+    if is_admin(
+        message.from_user.id
+    ):
         return
 
     with closing(db()) as c:
@@ -2733,29 +2881,17 @@ async def main():
 
     if (
         not BOT_TOKEN
-        or BOT_TOKEN == "BU_YERGA_YANGI_BOT_TOKENINGIZNI_QOYING"
+        or BOT_TOKEN == "BU_YERGA_YANGI_BOT_TOKENNI_QOYING"
     ):
 
         raise RuntimeError(
             "BOT_TOKEN main.py ichiga qo‘yilmagan!"
         )
 
-    if (
-        not ADMIN_IDS
-        or ADMIN_IDS == {123456789}
-    ):
+    if not ADMIN_IDS:
 
         raise RuntimeError(
             "ADMIN_IDS ichiga haqiqiy Telegram ID qo‘yilmagan!"
-        )
-
-    if (
-        not ISBOT_KANAL_URL
-        or ISBOT_KANAL_URL == "https://t.me/SIZNING_ISBOT_KANALINGIZ"
-    ):
-
-        logger.warning(
-            "ISBOT_KANAL_URL hali o‘zgartirilmagan!"
         )
 
     init_db()
