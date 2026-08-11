@@ -1,871 +1,1390 @@
-# OPEN BUDGET BOT - BARCHASI BITTA MAIN.PY
+# ============================================================
+# TELEGRAM BOT - MAIN.PY
+# Aiogram 3.x + SQLite
+# ============================================================
+
 import asyncio
 import logging
 import sqlite3
-from pathlib import Path
-from contextlib import closing
+import re
 from html import escape
-from urllib.parse import quote
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
-    Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
-    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery,
 )
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# =========================================================
-# TOKEN: XAVFSIZLIK UCHUN YANGI TOKENINGIZNI SHU YERGA QO'YING
-# =========================================================
+
+# ============================================================
+# 1. SOZLAMALAR
+# ============================================================
+
+# BOT TOKENINGIZNI SHU YERGA YOZING
 BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
 
-# ADMIN TELEGRAM ID LARI
-ADMIN_IDS = [7998053914]
+# ADMIN TELEGRAM ID LARINI SHU YERGA YOZING
+# Masalan:
+# ADMIN_IDS = [7998053914]
+ADMIN_IDS = [
+    7998053914
+]
 
-DB_PATH = Path("bot.db")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+# Referral uchun bonus
+REFERRAL_BONUS = 10000
 
-# =========================================================
-# DATABASE
-# =========================================================
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+# Pul yechish uchun minimal balans
+MIN_WITHDRAW = 30000
+
+DB_FILE = Path("bot.db")
 
 
-def column_exists(conn, table, column):
-    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})").fetchall())
+# ============================================================
+# 2. LOGGING
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 
-def add_column_if_missing(conn, table, column, definition):
-    if not column_exists(conn, table, column):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+# ============================================================
+# 3. BOT VA DISPATCHER
+# ============================================================
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+
+# ============================================================
+# 4. DATABASE
+# ============================================================
+
+def db():
+    return sqlite3.connect(DB_FILE)
 
 
 def init_db():
-    with closing(get_db()) as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                language TEXT DEFAULT 'uz',
-                phone TEXT,
-                voted INTEGER DEFAULT 0,
-                project_clicks INTEGER DEFAULT 0,
-                vote_clicks INTEGER DEFAULT 0,
-                joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                referred_by INTEGER DEFAULT NULL,
-                referral_count INTEGER DEFAULT 0
-            )
-        """)
-        add_column_if_missing(conn, "users", "referred_by", "INTEGER DEFAULT NULL")
-        add_column_if_missing(conn, "users", "referral_count", "INTEGER DEFAULT 0")
+    conn = db()
+    cur = conn.cursor()
+
+    # Foydalanuvchilar
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            phone TEXT,
+            balance INTEGER DEFAULT 0,
+            referral_code TEXT UNIQUE,
+            referred_by INTEGER,
+            referral_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Referral
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inviter_id INTEGER,
+            invited_id INTEGER UNIQUE,
+            bonus INTEGER DEFAULT 10000,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Ovoz/havola operatsiyalari
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            vote_type TEXT,
+            phone TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Savol-javob suhbatlari
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            user_id INTEGER PRIMARY KEY,
+            active INTEGER DEFAULT 1,
+            topic TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Pul yechish
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS withdrawals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            card_number TEXT,
+            amount INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Balans operatsiyalari
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS balance_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount INTEGER,
+            operation TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Sozlamalar
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    # Statistikalar
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS button_stats (
+            button TEXT PRIMARY KEY,
+            count INTEGER DEFAULT 0
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# 5. SOZLAMALAR FUNKSIYALARI
+# ============================================================
+
+def get_setting(key, default=""):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        (key,)
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    if row:
+        return row[0]
+
+    return default
+
+
+def set_setting(key, value):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO settings(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+    """, (key, value))
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# 6. STATISTIKA
+# ============================================================
+
+def count_button(button):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO button_stats(button, count)
+        VALUES (?, 1)
+        ON CONFLICT(button)
+        DO UPDATE SET count = count + 1
+    """, (button,))
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# 7. FOYDALANUVCHI
+# ============================================================
+
+def add_user(user_id, username, first_name):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    exists = cur.fetchone()
+
+    if not exists:
+        referral_code = str(user_id)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name_uz TEXT NOT NULL,
-                name_ru TEXT NOT NULL,
-                url TEXT,
-                phone_votes INTEGER DEFAULT 0,
-                link_votes INTEGER DEFAULT 0,
-                clicks INTEGER DEFAULT 0,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            INSERT INTO users(
+                user_id,
+                username,
+                first_name,
+                referral_code
             )
-        """)
-        add_column_if_missing(conn, "projects", "phone_votes", "INTEGER DEFAULT 0")
-        add_column_if_missing(conn, "projects", "link_votes", "INTEGER DEFAULT 0")
-        add_column_if_missing(conn, "projects", "clicks", "INTEGER DEFAULT 0")
-
+            VALUES (?, ?, ?, ?)
+        """, (
+            user_id,
+            username,
+            first_name,
+            referral_code
+        ))
+    else:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS votes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                project_id INTEGER NOT NULL,
-                vote_type TEXT NOT NULL,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, project_id, vote_type)
-            )
-        """)
+            UPDATE users
+            SET username = ?,
+                first_name = ?
+            WHERE user_id = ?
+        """, (
+            username,
+            first_name,
+            user_id
+        ))
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS questions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                question TEXT NOT NULL,
-                answer TEXT,
-                status TEXT DEFAULT 'pending',
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                answered_date TIMESTAMP
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        conn.commit()
+    conn.commit()
+    conn.close()
 
 
-def add_user(user_id, username="", first_name="", language="uz", referred_by=None):
-    with closing(get_db()) as conn:
-        cur = conn.cursor()
-        existing = cur.execute("SELECT user_id, referred_by FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not existing:
-            cur.execute("""
-                INSERT INTO users(user_id, username, first_name, language, referred_by)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, username or "", first_name or "", language, referred_by))
-            if referred_by and referred_by != user_id:
-                cur.execute("UPDATE users SET referral_count=referral_count+1 WHERE user_id=?", (referred_by,))
-        else:
-            cur.execute("UPDATE users SET username=?, first_name=? WHERE user_id=?",
-                        (username or "", first_name or "", user_id))
-        conn.commit()
+def get_user(user_id):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT * FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    return row
 
 
-def set_language(user_id, language):
-    with closing(get_db()) as conn:
-        conn.execute("UPDATE users SET language=? WHERE user_id=?", (language, user_id))
-        conn.commit()
+def get_balance(user_id):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT balance FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    return row[0] if row else 0
 
 
-def get_language(user_id):
-    with closing(get_db()) as conn:
-        row = conn.execute("SELECT language FROM users WHERE user_id=?", (user_id,)).fetchone()
-    return row[0] if row and row[0] else "uz"
+def add_balance(user_id, amount, operation):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET balance = balance + ?
+        WHERE user_id = ?
+    """, (amount, user_id))
+
+    cur.execute("""
+        INSERT INTO balance_history(
+            user_id,
+            amount,
+            operation
+        )
+        VALUES (?, ?, ?)
+    """, (
+        user_id,
+        amount,
+        operation
+    ))
+
+    conn.commit()
+    conn.close()
 
 
-def get_all_users():
-    with closing(get_db()) as conn:
-        return [r[0] for r in conn.execute("SELECT user_id FROM users").fetchall()]
+# ============================================================
+# 8. REFERRAL
+# ============================================================
+
+def process_referral(new_user_id, inviter_id):
+    if not inviter_id:
+        return False
+
+    if new_user_id == inviter_id:
+        return False
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT referred_by FROM users WHERE user_id = ?",
+        (new_user_id,)
+    )
+
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    if row[0] is not None:
+        conn.close()
+        return False
+
+    cur.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (inviter_id,)
+    )
+
+    inviter = cur.fetchone()
+
+    if not inviter:
+        conn.close()
+        return False
+
+    cur.execute("""
+        UPDATE users
+        SET referred_by = ?
+        WHERE user_id = ?
+    """, (
+        inviter_id,
+        new_user_id
+    ))
+
+    cur.execute("""
+        UPDATE users
+        SET referral_count = referral_count + 1,
+            balance = balance + ?
+        WHERE user_id = ?
+    """, (
+        REFERRAL_BONUS,
+        inviter_id
+    ))
+
+    cur.execute("""
+        INSERT INTO referrals(
+            inviter_id,
+            invited_id,
+            bonus
+        )
+        VALUES (?, ?, ?)
+    """, (
+        inviter_id,
+        new_user_id,
+        REFERRAL_BONUS
+    ))
+
+    cur.execute("""
+        INSERT INTO balance_history(
+            user_id,
+            amount,
+            operation
+        )
+        VALUES (?, ?, ?)
+    """, (
+        inviter_id,
+        REFERRAL_BONUS,
+        "Referral bonusi"
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return True
 
 
-def save_phone(user_id, phone):
-    with closing(get_db()) as conn:
-        conn.execute("UPDATE users SET phone=? WHERE user_id=?", (phone, user_id))
-        conn.commit()
+# ============================================================
+# 9. ASOSIY FOYDALANUVCHI MENYUSI
+# ============================================================
+
+def user_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📌 Loyihalar"),
+                KeyboardButton(text="🗳 Ovoz berish")
+            ],
+            [
+                KeyboardButton(text="💰 Balans"),
+                KeyboardButton(text="💳 Pul yechish")
+            ],
+            [
+                KeyboardButton(text="👥 Do‘stlarni taklif qilish"),
+                KeyboardButton(text="❓ Savol-javob")
+            ],
+            [
+                KeyboardButton(text="👨‍💼 Admin bilan bog‘lanish")
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 
-def get_projects():
-    with closing(get_db()) as conn:
-        return conn.execute("""
-            SELECT id,name_uz,name_ru,url,phone_votes,link_votes,clicks
-            FROM projects ORDER BY id DESC
-        """).fetchall()
-
-
-def get_project(project_id):
-    with closing(get_db()) as conn:
-        return conn.execute("""
-            SELECT id,name_uz,name_ru,url,phone_votes,link_votes,clicks
-            FROM projects WHERE id=?
-        """, (project_id,)).fetchone()
-
-
-def add_project(name, url):
-    with closing(get_db()) as conn:
-        conn.execute("INSERT INTO projects(name_uz,name_ru,url) VALUES(?,?,?)", (name, name, url))
-        conn.commit()
-
-
-def delete_project(project_id):
-    with closing(get_db()) as conn:
-        conn.execute("DELETE FROM votes WHERE project_id=?", (project_id,))
-        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
-        conn.commit()
-
-
-def increase_project_click(project_id, user_id):
-    with closing(get_db()) as conn:
-        conn.execute("UPDATE projects SET clicks=clicks+1 WHERE id=?", (project_id,))
-        conn.execute("UPDATE users SET project_clicks=project_clicks+1 WHERE user_id=?", (user_id,))
-        conn.commit()
-
-
-def record_vote(project_id, user_id, vote_type):
-    with closing(get_db()) as conn:
-        try:
-            conn.execute("INSERT INTO votes(user_id,project_id,vote_type) VALUES(?,?,?)",
-                         (user_id, project_id, vote_type))
-        except sqlite3.IntegrityError:
-            return False
-        if vote_type == "phone":
-            conn.execute("UPDATE projects SET phone_votes=phone_votes+1 WHERE id=?", (project_id,))
-        else:
-            conn.execute("UPDATE projects SET link_votes=link_votes+1 WHERE id=?", (project_id,))
-        conn.execute("UPDATE users SET voted=1,vote_clicks=vote_clicks+1 WHERE user_id=?", (user_id,))
-        conn.commit()
-        return True
-
-
-def create_question(user_id, question):
-    with closing(get_db()) as conn:
-        cur = conn.execute("INSERT INTO questions(user_id,question) VALUES(?,?)", (user_id, question))
-        qid = cur.lastrowid
-        conn.commit()
-        return qid
-
-
-def answer_question(question_id, answer):
-    with closing(get_db()) as conn:
-        conn.execute("""
-            UPDATE questions SET answer=?,status='answered',answered_date=CURRENT_TIMESTAMP WHERE id=?
-        """, (answer, question_id))
-        conn.commit()
-
-
-def get_question(question_id):
-    with closing(get_db()) as conn:
-        return conn.execute("SELECT id,user_id,question,answer,status,created_date FROM questions WHERE id=?",
-                            (question_id,)).fetchone()
-
-
-def get_pending_questions():
-    with closing(get_db()) as conn:
-        return conn.execute("""
-            SELECT id,user_id,question,created_date FROM questions
-            WHERE status='pending' ORDER BY id DESC
-        """).fetchall()
-
-# =========================================================
-# TEXTLAR
-# =========================================================
-TEXTS = {
-    "uz": {
-        "welcome": "👋 Botga xush kelibsiz!\n\n🗳 Ovoz berish va boshqa xizmatlardan foydalaning.",
-        "select_language": "🌐 Tilni tanlang:",
-        "select_vote": "🗳 Ovoz berish uchun bo‘limni tanlang:",
-        "no_votes": "🗳 Hozircha ovoz berishlar yo‘q.",
-        "vote_info": "🗳 <b>{name}</b>\n\nQuyidagi amalni tanlang:",
-        "phone_vote": "📞 Ovoz berish uchun telefon raqamingizni yuboring.",
-        "send_phone": "📱 Pastdagi tugma orqali telefon raqamingizni yuboring.",
-        "phone_saved": "✅ Telefon raqamingiz qabul qilindi va ovozingiz hisobga olindi.",
-        "already_voted": "ℹ️ Siz bu bo‘lim uchun allaqachon ovoz bergansiz.",
-        "link_vote": "🔗 Ovoz berish sahifasiga o‘tish uchun tugmani bosing.",
-        "link_missing": "⚠️ Bu ovoz berish uchun havola qo‘shilmagan.",
-        "back": "⬅️ Orqaga",
-        "contact_admin": "💬 Admin bilan bog‘lanish",
-        "questions": "❓ Savol-javob",
-        "invite": "🔗 Do‘stlarni taklif qilish",
-        "invite_text": "🔗 Do‘stlaringizni botga taklif qiling.\n\nQuyidagi tugma orqali Telegram guruh yoki kontaktga ulashing:",
-        "share": "📤 Ulashish",
-        "send_question": "✍️ Savolingizni yozing:",
-        "question_sent": "✅ Savolingiz adminga yuborildi. Javobni shu yerda olasiz.",
-        "send_admin_message": "✍️ Adminga yubormoqchi bo‘lgan xabaringizni yuboring.",
-        "message_sent": "✅ Xabaringiz adminga yuborildi.",
-        "admin_panel": "👑 <b>Admin panel</b>\n\nKerakli bo‘limni tanlang:",
-        "statistics": "📊 <b>Statistika</b>\n\n👥 Foydalanuvchilar: <b>{users}</b>\n🗳 Ovoz berishlar: <b>{projects}</b>\n🖱 Ko‘rishlar: <b>{clicks}</b>\n📞 Telefon ovozlari: <b>{phone}</b>\n🔗 Havola ovozlari: <b>{link}</b>\n🗳 Jami ovozlar: <b>{total_votes}</b>\n🔗 Taklif qilinganlar: <b>{referrals}</b>",
-        "add_vote_name": "➕ Ovoz berish qo‘shish\n\nNomini yuboring:",
-        "add_vote_link": "🔗 Endi ovoz berish havolasini yuboring.\n\nMasalan: https://example.com\n\nHavola bo‘lmasa, <b>yo‘q</b> deb yozing.",
-        "vote_added": "✅ Ovoz berish muvaffaqiyatli qo‘shildi.",
-        "broadcast": "📢 Barcha foydalanuvchilarga yubormoqchi bo‘lgan xabaringizni yuboring.",
-        "broadcast_done": "✅ Xabar yuborildi.\n\n📨 Yuborildi: {sent}\n❌ Xatolik: {failed}",
-        "reply_prompt": "✍️ Foydalanuvchiga yubormoqchi bo‘lgan javobingizni yozing:",
-        "reply_sent": "✅ Javob yuborildi.",
-        "reply_failed": "❌ Javob yuborilmadi.",
-        "unknown": "⚠️ Menyudagi tugmalardan foydalaning."
-    },
-    "ru": {
-        "welcome": "👋 Добро пожаловать!\n\n🗳 Выберите нужный раздел.",
-        "select_language": "🌐 Выберите язык:",
-        "select_vote": "🗳 Выберите голосование:",
-        "no_votes": "🗳 Пока голосований нет.",
-        "vote_info": "🗳 <b>{name}</b>\n\nВыберите действие:",
-        "phone_vote": "📞 Отправьте номер телефона для голосования.",
-        "send_phone": "📱 Нажмите кнопку ниже и отправьте номер.",
-        "phone_saved": "✅ Номер принят, ваш голос учтён.",
-        "already_voted": "ℹ️ Вы уже голосовали в этом разделе.",
-        "link_vote": "🔗 Нажмите кнопку для перехода на страницу голосования.",
-        "link_missing": "⚠️ Для этого голосования ссылка не добавлена.",
-        "back": "⬅️ Назад",
-        "contact_admin": "💬 Связаться с администратором",
-        "questions": "❓ Вопрос-ответ",
-        "invite": "🔗 Пригласить друзей",
-        "invite_text": "🔗 Пригласите друзей в бота.\n\nНажмите кнопку ниже и выберите группу или контакт:",
-        "share": "📤 Поделиться",
-        "send_question": "✍️ Напишите ваш вопрос:",
-        "question_sent": "✅ Вопрос отправлен администратору. Ответ придёт сюда.",
-        "send_admin_message": "✍️ Отправьте сообщение администратору.",
-        "message_sent": "✅ Сообщение отправлено администратору.",
-        "admin_panel": "👑 <b>Панель администратора</b>\n\nВыберите раздел:",
-        "statistics": "📊 <b>Статистика</b>\n\n👥 Пользователи: <b>{users}</b>\n🗳 Голосования: <b>{projects}</b>\n🖱 Переходы: <b>{clicks}</b>\n📞 Голоса по телефону: <b>{phone}</b>\n🔗 Голоса по ссылке: <b>{link}</b>\n🗳 Всего голосов: <b>{total_votes}</b>\n🔗 Приглашено: <b>{referrals}</b>",
-        "add_vote_name": "➕ Добавление голосования\n\nОтправьте название:",
-        "add_vote_link": "🔗 Отправьте ссылку голосования.\n\nНапример: https://example.com\n\nЕсли ссылки нет, напишите <b>нет</b>.",
-        "vote_added": "✅ Голосование добавлено.",
-        "broadcast": "📢 Отправьте сообщение для всех пользователей.",
-        "broadcast_done": "✅ Сообщение отправлено.\n\n📨 Отправлено: {sent}\n❌ Ошибок: {failed}",
-        "reply_prompt": "✍️ Напишите ответ пользователю:",
-        "reply_sent": "✅ Ответ отправлен.",
-        "reply_failed": "❌ Не удалось отправить ответ.",
-        "unknown": "⚠️ Используйте кнопки меню."
-    }
-}
-
-# =========================================================
-# KEYBOARDS
-# =========================================================
-def language_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🇺🇿 O‘zbek"), KeyboardButton(text="🇷🇺 Русский")]], resize_keyboard=True)
-
-
-def user_keyboard_uz():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🗳 Ovoz berish")],
-        [KeyboardButton(text="💰 Balans"), KeyboardButton(text="💸 Pulni yechib olish")],
-        [KeyboardButton(text="🔗 Do‘stlarni taklif qilish"), KeyboardButton(text="🎁 Iphone 17")],
-        [KeyboardButton(text="❓ Savol-javob"), KeyboardButton(text="💬 Admin bilan bog‘lanish")],
-        [KeyboardButton(text="🌐 Tilni almashtirish")]
-    ], resize_keyboard=True)
-
-
-def user_keyboard_ru():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🗳 Голосование")],
-        [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💸 Вывести деньги")],
-        [KeyboardButton(text="🔗 Пригласить друзей"), KeyboardButton(text="🎁 Iphone 17")],
-        [KeyboardButton(text="❓ Вопрос-ответ"), KeyboardButton(text="💬 Связаться с администратором")],
-        [KeyboardButton(text="🌐 Сменить язык")]
-    ], resize_keyboard=True)
-
+# ============================================================
+# 10. ADMIN MENYUSI
+# ============================================================
 
 def admin_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="➕ Ovoz berish qo‘shish")],
-        [KeyboardButton(text="🗳 Ovoz berishlar"), KeyboardButton(text="❓ Savollar")],
-        [KeyboardButton(text="📢 Reklama yuborish")],
-        [KeyboardButton(text="⬅️ Foydalanuvchi menyusi")]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📊 Statistika"),
+                KeyboardButton(text="👥 Foydalanuvchilar")
+            ],
+            [
+                KeyboardButton(text="📞 Telefon raqamlari"),
+                KeyboardButton(text="💳 Pul yechishlar")
+            ],
+            [
+                KeyboardButton(text="❓ Savol-javoblar"),
+                KeyboardButton(text="🗳 Ovozlar")
+            ],
+            [
+                KeyboardButton(text="🔗 Ovoz havolasi"),
+                KeyboardButton(text="👨‍💼 Admin kontakt")
+            ],
+            [
+                KeyboardButton(text="💰 Balans boshqaruvi"),
+                KeyboardButton(text="📢 Xabar yuborish")
+            ],
+            [
+                KeyboardButton(text="🏠 Foydalanuvchi menyusi")
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 
-def vote_list_keyboard(projects, lang):
-    buttons = [[InlineKeyboardButton(text=f"🗳 {p[1] if lang=='uz' else p[2]}", callback_data=f"project:{p[0]}")] for p in projects]
-    buttons.append([InlineKeyboardButton(text=TEXTS[lang]["back"], callback_data="user_back")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+# ============================================================
+# 11. ADMIN TEKSHIRISH
+# ============================================================
 
-
-def vote_action_keyboard(project_id, has_url, lang):
-    buttons = [[InlineKeyboardButton(text="📞 Ovoz berish", callback_data=f"phone_vote:{project_id}")]]
-    if has_url:
-        buttons.append([InlineKeyboardButton(text="🔗 Havola orqali ovoz berish", callback_data=f"link_vote:{project_id}")])
-    buttons.append([InlineKeyboardButton(text=TEXTS[lang]["back"], callback_data="votes_back")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_question_keyboard(question_id):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ Javob berish", callback_data=f"answer_question:{question_id}")]])
-
-
-def admin_reply_keyboard(user_id):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ Javob berish", callback_data=f"admin_reply:{user_id}")]])
-
-# =========================================================
-# STATES
-# =========================================================
-class AddVoteState(StatesGroup):
-    name = State()
-    link = State()
-
-class BroadcastState(StatesGroup):
-    message = State()
-
-class AdminReplyState(StatesGroup):
-    message = State()
-
-class QuestionState(StatesGroup):
-    message = State()
-
-class ContactAdminState(StatesGroup):
-    message = State()
-
-class QuestionAnswerState(StatesGroup):
-    message = State()
-
-pending_phone_votes = {}
-admin_reply_targets = {}
-question_answer_targets = {}
-
-# =========================================================
-# START / REFERRAL
-# =========================================================
-@dp.message(CommandStart())
-async def start_handler(message: Message, state: FSMContext):
-    await state.clear()
-    user = message.from_user
-    referred_by = None
-    if message.text:
-        parts = message.text.split(maxsplit=1)
-        if len(parts) == 2 and parts[1].startswith("ref_"):
-            try:
-                referred_by = int(parts[1][4:])
-            except ValueError:
-                referred_by = None
-    old_lang = get_language(user.id) if user.id in get_all_users() else "uz"
-    add_user(user.id, user.username, user.first_name, old_lang, referred_by)
-    if is_admin(user.id):
-        await message.answer(TEXTS["uz"]["admin_panel"], reply_markup=admin_keyboard())
-    else:
-        await message.answer(TEXTS[old_lang]["welcome"], reply_markup=user_keyboard_uz() if old_lang == "uz" else user_keyboard_ru())
-
-# =========================================================
-# LANGUAGE
-# =========================================================
-@dp.message(F.text == "🇺🇿 O‘zbek")
-async def uz_language(message: Message):
-    set_language(message.from_user.id, "uz")
-    await message.answer(TEXTS["uz"]["welcome"], reply_markup=user_keyboard_uz())
-
-@dp.message(F.text == "🇷🇺 Русский")
-async def ru_language(message: Message):
-    set_language(message.from_user.id, "ru")
-    await message.answer(TEXTS["ru"]["welcome"], reply_markup=user_keyboard_ru())
-
-@dp.message(F.text.in_({"🌐 Tilni almashtirish", "🌐 Сменить язык"}))
-async def change_language(message: Message):
-    await message.answer(TEXTS[get_language(message.from_user.id)]["select_language"], reply_markup=language_keyboard())
-
-# =========================================================
-# USER VOTING
-# =========================================================
-@dp.message(F.text.in_({"🗳 Ovoz berish", "🗳 Голосование"}))
-async def show_votes(message: Message):
-    lang = get_language(message.from_user.id)
-    projects = get_projects()
-    if not projects:
-        await message.answer(TEXTS[lang]["no_votes"])
-        return
-    await message.answer(TEXTS[lang]["select_vote"], reply_markup=vote_list_keyboard(projects, lang))
-
-@dp.callback_query(F.data.startswith("project:"))
-async def project_selected(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    lang = get_language(user_id)
-    project_id = int(callback.data.split(":")[1])
-    project = get_project(project_id)
-    if not project:
-        await callback.answer("Topilmadi", show_alert=True)
-        return
-    increase_project_click(project_id, user_id)
-    name, url = (project[1], project[3]) if lang == "uz" else (project[2], project[3])
-    await callback.message.edit_text(TEXTS[lang]["vote_info"].format(name=escape(name)), reply_markup=vote_action_keyboard(project_id, bool(url), lang))
-    await callback.answer()
-
-@dp.callback_query(F.data.startswith("phone_vote:"))
-async def phone_vote_start(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    lang = get_language(user_id)
-    project_id = int(callback.data.split(":")[1])
-    project = get_project(project_id)
-    if not project:
-        await callback.answer("Topilmadi", show_alert=True)
-        return
-    with closing(get_db()) as conn:
-        exists = conn.execute("SELECT 1 FROM votes WHERE user_id=? AND project_id=? AND vote_type='phone'", (user_id, project_id)).fetchone()
-    if exists:
-        await callback.answer(TEXTS[lang]["already_voted"], show_alert=True)
-        return
-    pending_phone_votes[user_id] = project_id
-    kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📱 Telefon raqamimni yuborish", request_contact=True)],
-        [KeyboardButton(text=TEXTS[lang]["back"])]
-    ], resize_keyboard=True, one_time_keyboard=True)
-    await callback.message.answer(TEXTS[lang]["phone_vote"] + "\n\n" + TEXTS[lang]["send_phone"], reply_markup=kb)
-    await callback.answer()
-
-@dp.message(F.contact)
-async def contact_handler(message: Message):
-    user_id = message.from_user.id
-    if user_id not in pending_phone_votes:
-        return
-    lang = get_language(user_id)
-    project_id = pending_phone_votes.pop(user_id)
-    phone = message.contact.phone_number
-    save_phone(user_id, phone)
-    ok = record_vote(project_id, user_id, "phone")
-    await message.answer(TEXTS[lang]["phone_saved"] if ok else TEXTS[lang]["already_voted"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
-
-@dp.callback_query(F.data.startswith("link_vote:"))
-async def link_vote(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    lang = get_language(user_id)
-    project_id = int(callback.data.split(":")[1])
-    project = get_project(project_id)
-    if not project:
-        await callback.answer("Topilmadi", show_alert=True)
-        return
-    url = project[3]
-    if not url:
-        await callback.answer(TEXTS[lang]["link_missing"], show_alert=True)
-        return
-    ok = record_vote(project_id, user_id, "link")
-    if not ok:
-        await callback.answer(TEXTS[lang]["already_voted"], show_alert=True)
-        return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 Ovoz berish", url=url)],
-        [InlineKeyboardButton(text=TEXTS[lang]["back"], callback_data=f"project:{project_id}")]
-    ])
-    await callback.message.answer(TEXTS[lang]["link_vote"], reply_markup=kb)
-    await callback.answer()
-
-@dp.callback_query(F.data == "votes_back")
-async def votes_back(callback: CallbackQuery):
-    lang = get_language(callback.from_user.id)
-    projects = get_projects()
-    if not projects:
-        await callback.message.edit_text(TEXTS[lang]["no_votes"])
-    else:
-        await callback.message.edit_text(TEXTS[lang]["select_vote"], reply_markup=vote_list_keyboard(projects, lang))
-    await callback.answer()
-
-@dp.callback_query(F.data == "user_back")
-async def user_back(callback: CallbackQuery):
-    lang = get_language(callback.from_user.id)
-    await callback.message.delete()
-    await callback.message.answer(TEXTS[lang]["welcome"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
-    await callback.answer()
-
-# =========================================================
-# QUESTIONS / ADMIN CONTACT
-# =========================================================
-@dp.message(F.text.in_({"❓ Savol-javob", "❓ Вопрос-ответ"}))
-async def question_start(message: Message, state: FSMContext):
-    lang = get_language(message.from_user.id)
-    await state.set_state(QuestionState.message)
-    await message.answer(TEXTS[lang]["send_question"], reply_markup=ReplyKeyboardRemove())
-
-@dp.message(QuestionState.message)
-async def question_message(message: Message, state: FSMContext, bot: Bot):
-    user = message.from_user
-    if not message.text or not message.text.strip():
-        await message.answer("❌ Savol matn ko‘rinishida bo‘lsin.")
-        return
-    qid = create_question(user.id, message.text.strip())
-    username = f"@{user.username}" if user.username else "username yo‘q"
-    admin_text = (f"❓ <b>Yangi savol #{qid}</b>\n\n👤 {escape(user.full_name)}\n"
-                  f"🔹 {escape(username)}\n🆔 <code>{user.id}</code>\n\n"
-                  f"💬 <b>Savol:</b>\n{escape(message.text.strip())}")
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, admin_text, reply_markup=admin_question_keyboard(qid))
-        except Exception as e:
-            logging.error("Question admin error: %s", e)
-    await state.clear()
-    lang = get_language(user.id)
-    await message.answer(TEXTS[lang]["question_sent"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
-
-@dp.callback_query(F.data.startswith("answer_question:"))
-async def answer_question_start(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        await callback.answer()
-        return
-    qid = int(callback.data.split(":")[1])
-    q = get_question(qid)
-    if not q or q[4] != "pending":
-        await callback.answer("Bu savolga allaqachon javob berilgan.", show_alert=True)
-        return
-    question_answer_targets[callback.from_user.id] = qid
-    await state.set_state(QuestionAnswerState.message)
-    await callback.message.answer(TEXTS["uz"]["reply_prompt"], reply_markup=ReplyKeyboardRemove())
-    await callback.answer()
-
-@dp.message(QuestionAnswerState.message)
-async def answer_question_message(message: Message, state: FSMContext, bot: Bot):
-    if not is_admin(message.from_user.id):
-        return
-    qid = question_answer_targets.get(message.from_user.id)
-    if not qid or not message.text:
-        return
-    q = get_question(qid)
-    if not q:
-        await state.clear()
-        return
-    try:
-        await bot.send_message(q[1], f"💬 <b>Admin javobi:</b>\n\n{escape(message.text)}")
-        answer_question(qid, message.text)
-        await message.answer("✅ Javob yuborildi va bazaga saqlandi.", reply_markup=admin_keyboard())
-    except Exception as e:
-        logging.error("Question answer error: %s", e)
-        await message.answer("❌ Foydalanuvchiga yuborib bo‘lmadi.", reply_markup=admin_keyboard())
-    question_answer_targets.pop(message.from_user.id, None)
-    await state.clear()
-
-@dp.message(F.text.in_({"💬 Admin bilan bog‘lanish", "💬 Связаться с администратором"}))
-async def contact_admin_start(message: Message, state: FSMContext):
-    lang = get_language(message.from_user.id)
-    await state.set_state(ContactAdminState.message)
-    await message.answer(TEXTS[lang]["send_admin_message"], reply_markup=ReplyKeyboardRemove())
-
-@dp.message(ContactAdminState.message)
-async def contact_admin_message(message: Message, state: FSMContext, bot: Bot):
-    user = message.from_user
-    username = f"@{user.username}" if user.username else "username yo‘q"
-    admin_text = (f"📩 <b>Yangi xabar</b>\n\n👤 {escape(user.full_name)}\n"
-                  f"🔹 {escape(username)}\n🆔 <code>{user.id}</code>")
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, admin_text, reply_markup=admin_reply_keyboard(user.id))
-            await bot.copy_message(admin_id, message.chat.id, message.message_id)
-        except Exception as e:
-            logging.error("Admin contact error: %s", e)
-    await state.clear()
-    lang = get_language(user.id)
-    await message.answer(TEXTS[lang]["message_sent"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
-
-# =========================================================
-# INVITE / SHARE
-# =========================================================
-@dp.message(F.text.in_({"🔗 Do‘stlarni taklif qilish", "🔗 Пригласить друзей"}))
-async def invite_friends(message: Message, bot: Bot):
-    lang = get_language(message.from_user.id)
-    me = await bot.get_me()
-    ref_link = f"https://t.me/{me.username}?start=ref_{message.from_user.id}"
-    share_url = "https://t.me/share/url?url=" + quote(ref_link, safe="") + "&text=" + quote("🤝 Botga qo‘shiling!", safe="")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]["share"], url=share_url)]])
-    await message.answer(TEXTS[lang]["invite_text"], reply_markup=kb)
-
-# =========================================================
-# SIMPLE BUTTONS FROM SCREEN
-# =========================================================
-@dp.message(F.text.in_({"💰 Balans", "💰 Баланс"}))
-async def balance_handler(message: Message):
-    await message.answer("💰 Balans bo‘limi hozircha ma’lumot ko‘rsatish uchun tayyor.\n\n🧾 Balans tizimi uchun admin tomonidan alohida qoidalar kiritilishi kerak.")
-
-@dp.message(F.text.in_({"💸 Pulni yechib olish", "💸 Вывести деньги"}))
-async def withdraw_handler(message: Message):
-    await message.answer("💸 Pul yechib olish bo‘limi hozircha faol emas.")
-
-@dp.message(F.text.in_({"🎁 Iphone 17"}))
-async def iphone_handler(message: Message):
-    await message.answer("🎁 Iphone 17 bo‘limi.\n\nTanlov va shartlar admin tomonidan boshqariladi.")
-
-# =========================================================
-# ADMIN CHECK / COMMAND
-# =========================================================
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-@dp.message(Command("admin"))
-async def admin_command(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    await message.answer(TEXTS["uz"]["admin_panel"], reply_markup=admin_keyboard())
 
-@dp.message(F.text == "📊 Statistika")
-async def statistics_handler(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    with closing(get_db()) as conn:
-        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        projects = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
-        clicks = conn.execute("SELECT COALESCE(SUM(clicks),0) FROM projects").fetchone()[0]
-        phone = conn.execute("SELECT COALESCE(SUM(phone_votes),0) FROM projects").fetchone()[0]
-        link = conn.execute("SELECT COALESCE(SUM(link_votes),0) FROM projects").fetchone()[0]
-        referrals = conn.execute("SELECT COALESCE(SUM(referral_count),0) FROM users").fetchone()[0]
-    await message.answer(TEXTS["uz"]["statistics"].format(users=users, projects=projects, clicks=clicks, phone=phone, link=link, total_votes=phone+link, referrals=referrals))
+# ============================================================
+# 12. START
+# ============================================================
 
-# =========================================================
-# ADMIN ADD VOTE
-# =========================================================
-@dp.message(F.text == "➕ Ovoz berish qo‘shish")
-async def add_vote_start(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    await state.set_state(AddVoteState.name)
-    await message.answer(TEXTS["uz"]["add_vote_name"])
-
-@dp.message(AddVoteState.name)
-async def add_vote_name(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    if not message.text or not message.text.strip():
-        await message.answer("❌ Nom bo‘sh bo‘lishi mumkin emas.")
-        return
-    await state.update_data(name=message.text.strip())
-    await state.set_state(AddVoteState.link)
-    await message.answer(TEXTS["uz"]["add_vote_link"])
-
-@dp.message(AddVoteState.link)
-async def add_vote_link(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    url = (message.text or "").strip()
-    if url.lower() in {"yo‘q", "yo'q", "yoq", "нет", "no"}:
-        url = ""
-    elif not (url.startswith("http://") or url.startswith("https://")):
-        await message.answer("❌ Havola http:// yoki https:// bilan boshlansin yoki 'yo‘q' deb yozing.")
-        return
-    data = await state.get_data()
-    add_project(data["name"], url)
+@dp.message(CommandStart())
+async def start_handler(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(TEXTS["uz"]["vote_added"], reply_markup=admin_keyboard())
 
-# =========================================================
-# ADMIN VOTE LIST / DELETE
-# =========================================================
-@dp.message(F.text.in_({"🗳 Ovoz berishlar", "📌 Loyihalar"}))
-async def admin_votes(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    projects = get_projects()
-    if not projects:
-        await message.answer("🗳 Hozircha ovoz berishlar yo‘q.")
-        return
-    buttons = [[InlineKeyboardButton(text=f"🗳 {p[1]}", callback_data=f"admin_project:{p[0]}")] for p in projects]
-    await message.answer("🗳 <b>Ovoz berishlar</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    user = message.from_user
 
-@dp.callback_query(F.data.startswith("admin_project:"))
-async def admin_project_selected(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer()
-        return
-    project_id = int(callback.data.split(":")[1])
-    p = get_project(project_id)
-    if not p:
-        await callback.answer("Topilmadi", show_alert=True)
-        return
-    text = (f"🗳 <b>{escape(p[1])}</b>\n\n🔗 {escape(p[3] or 'Havola yo‘q')}\n\n"
-            f"🖱 Ko‘rishlar: {p[6]}\n📞 Telefon ovozlari: {p[4]}\n🔗 Havola ovozlari: {p[5]}")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🗑 O‘chirish", callback_data=f"delete_project:{project_id}")]])
-    await callback.message.answer(text, reply_markup=kb)
-    await callback.answer()
+    add_user(
+        user.id,
+        user.username or "",
+        user.first_name or ""
+    )
 
-@dp.callback_query(F.data.startswith("delete_project:"))
-async def delete_project_handler(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer()
-        return
-    project_id = int(callback.data.split(":")[1])
-    delete_project(project_id)
-    await callback.message.edit_text("✅ Ovoz berish o‘chirildi.")
-    await callback.answer()
+    # Referral parametr
+    args = message.text.split(maxsplit=1)
 
-# =========================================================
-# ADMIN QUESTIONS LIST
-# =========================================================
-@dp.message(F.text == "❓ Savollar")
-async def admin_questions(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    questions = get_pending_questions()
-    if not questions:
-        await message.answer("✅ Javob kutilayotgan savollar yo‘q.")
-        return
-    for q in questions[:30]:
-        text = f"❓ <b>Savol #{q[0]}</b>\n🆔 <code>{q[1]}</code>\n\n{escape(q[2])}"
-        await message.answer(text, reply_markup=admin_question_keyboard(q[0]))
-
-# =========================================================
-# ADMIN BROADCAST
-# =========================================================
-@dp.message(F.text == "📢 Reklama yuborish")
-async def broadcast_start(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    await state.set_state(BroadcastState.message)
-    await message.answer(TEXTS["uz"]["broadcast"], reply_markup=ReplyKeyboardRemove())
-
-@dp.message(BroadcastState.message)
-async def broadcast_message(message: Message, state: FSMContext, bot: Bot):
-    if not is_admin(message.from_user.id):
-        return
-    sent = failed = 0
-    for user_id in get_all_users():
+    if len(args) > 1:
         try:
-            await bot.copy_message(user_id, message.chat.id, message.message_id)
-            sent += 1
-        except Exception as e:
-            failed += 1
-            logging.error("Broadcast %s: %s", user_id, e)
-        await asyncio.sleep(0.04)
-    await state.clear()
-    await message.answer(TEXTS["uz"]["broadcast_done"].format(sent=sent, failed=failed), reply_markup=admin_keyboard())
+            inviter_id = int(args[1])
+            process_referral(user.id, inviter_id)
+        except Exception:
+            pass
 
-# =========================================================
-# ADMIN REPLY TO CONTACT MESSAGE
-# =========================================================
-@dp.callback_query(F.data.startswith("admin_reply:"))
-async def admin_reply_start(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        await callback.answer()
+    if is_admin(user.id):
+        await message.answer(
+            "👨‍💼 <b>Admin panel</b>\n\n"
+            "Kerakli bo‘limni tanlang.",
+            reply_markup=admin_keyboard()
+        )
+    else:
+        await message.answer(
+            f"👋 Assalomu alaykum, <b>{escape(user.first_name or 'Foydalanuvchi')}</b>!\n\n"
+            "Botga xush kelibsiz.",
+            reply_markup=user_keyboard()
+        )
+
+
+# ============================================================
+# 13. BALANS
+# ============================================================
+
+@dp.message(F.text == "💰 Balans")
+async def balance_handler(message: Message):
+    if is_admin(message.from_user.id):
         return
-    user_id = int(callback.data.split(":")[1])
-    admin_reply_targets[callback.from_user.id] = user_id
-    await state.set_state(AdminReplyState.message)
-    await callback.message.answer(TEXTS["uz"]["reply_prompt"], reply_markup=ReplyKeyboardRemove())
+
+    count_button("balans")
+
+    balance = get_balance(message.from_user.id)
+
+    await message.answer(
+        "💰 <b>Sizning balansingiz</b>\n\n"
+        f"💵 Balans: <b>{balance:,} so‘m</b>\n\n"
+        "💳 Balansdagi pulni yechish uchun balansda "
+        "<b>kamida 30 000 so‘m</b> bo‘lishi kerak.\n\n"
+        "Balansni referral orqali to‘ldirishingiz mumkin.",
+        reply_markup=user_keyboard()
+    )
+
+
+# ============================================================
+# 14. OVOZ BERISH
+# ============================================================
+
+@dp.message(F.text == "🗳 Ovoz berish")
+async def vote_handler(message: Message):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("ovoz")
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔗 Havola orqali",
+                    callback_data="vote_link"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📞 Telefon raqami orqali",
+                    callback_data="vote_phone"
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        "🗳 <b>Ovoz berish</b>\n\n"
+        "Ovoz berish usulini tanlang:",
+        reply_markup=keyboard
+    )
+
+
+# ============================================================
+# 15. OVOZ HAVOLASI
+# ============================================================
+
+@dp.callback_query(F.data == "vote_link")
+async def vote_link_callback(callback: CallbackQuery):
+    link = get_setting("vote_link", "")
+
+    if not link:
+        await callback.message.answer(
+            "🔗 Hozircha ovoz berish havolasi admin tomonidan qo‘shilmagan."
+        )
+    else:
+        await callback.message.answer(
+            "🔗 <b>Ovoz berish havolasi:</b>\n\n"
+            f"{escape(link)}"
+        )
+
     await callback.answer()
 
-@dp.message(AdminReplyState.message)
-async def admin_reply_message(message: Message, state: FSMContext, bot: Bot):
+
+# ============================================================
+# 16. TELEFON ORQALI OVOZ
+# ============================================================
+
+class VoteStates(StatesGroup):
+    waiting_phone = State()
+
+
+@dp.callback_query(F.data == "vote_phone")
+async def vote_phone_callback(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    await state.set_state(VoteStates.waiting_phone)
+
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="📞 Telefon raqamimni yuborish",
+                    request_contact=True
+                )
+            ],
+            [
+                KeyboardButton(text="❌ Bekor qilish")
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+
+    await callback.message.answer(
+        "📞 <b>Ovoz berish uchun telefon raqamingizni yuboring.</b>\n\n"
+        "Pastdagi tugma orqali telefon raqamingizni yuborishingiz mumkin.",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+@dp.message(VoteStates.waiting_phone)
+async def receive_vote_phone(
+    message: Message,
+    state: FSMContext
+):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+
+        await message.answer(
+            "❌ Bekor qilindi.",
+            reply_markup=user_keyboard()
+        )
+        return
+
+    phone = None
+
+    if message.contact:
+        phone = message.contact.phone_number
+    elif message.text:
+        phone = message.text.strip()
+
+    if not phone:
+        await message.answer(
+            "❗ Telefon raqamini yuboring."
+        )
+        return
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET phone = ?
+        WHERE user_id = ?
+    """, (
+        phone,
+        message.from_user.id
+    ))
+
+    cur.execute("""
+        INSERT INTO votes(
+            user_id,
+            vote_type,
+            phone,
+            status
+        )
+        VALUES (?, ?, ?, ?)
+    """, (
+        message.from_user.id,
+        "phone",
+        phone,
+        "pending"
+    ))
+
+    conn.commit()
+    conn.close()
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Telefon raqamingiz qabul qilindi.\n\n"
+        "📨 Ma’lumot admin panelga yuborildi.",
+        reply_markup=user_keyboard()
+    )
+
+    # Adminlarga yuborish
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💬 Javob berish",
+                            callback_data=f"reply_{message.from_user.id}"
+                        )
+                    ]
+                ]
+            )
+
+            await bot.send_message(
+                admin_id,
+                "📞 <b>Yangi telefon raqami</b>\n\n"
+                f"👤 Ism: {escape(message.from_user.full_name)}\n"
+                f"🆔 ID: <code>{message.from_user.id}</code>\n"
+                f"📞 Telefon: <code>{escape(phone)}</code>",
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+            logger.error(e)
+
+
+# ============================================================
+# 17. SAVOL-JAVOB
+# ============================================================
+
+class QuestionStates(StatesGroup):
+    waiting_question = State()
+
+
+@dp.message(F.text == "❓ Savol-javob")
+async def question_start(
+    message: Message,
+    state: FSMContext
+):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("savol_javob")
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO conversations(user_id, active, topic)
+        VALUES (?, 1, 'savol-javob')
+        ON CONFLICT(user_id)
+        DO UPDATE SET active = 1
+    """, (message.from_user.id,))
+
+    conn.commit()
+    conn.close()
+
+    await state.set_state(QuestionStates.waiting_question)
+
+    await message.answer(
+        "❓ <b>Savolingizni yozing.</b>\n\n"
+        "Savolingiz adminga yuboriladi.",
+        reply_markup=user_keyboard()
+    )
+
+
+@dp.message(QuestionStates.waiting_question)
+async def receive_question(
+    message: Message,
+    state: FSMContext
+):
+    if not message.text:
+        await message.answer("❗ Iltimos, savolni matn ko‘rinishida yuboring.")
+        return
+
+    question = message.text
+
+    await state.clear()
+
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💬 Javob berish",
+                            callback_data=f"reply_{message.from_user.id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="🔴 Suhbatni yopish",
+                            callback_data=f"close_{message.from_user.id}"
+                        )
+                    ]
+                ]
+            )
+
+            await bot.send_message(
+                admin_id,
+                "❓ <b>Yangi savol</b>\n\n"
+                f"👤 {escape(message.from_user.full_name)}\n"
+                f"🆔 <code>{message.from_user.id}</code>\n\n"
+                f"💬 {escape(question)}",
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+            logger.error(e)
+
+    await message.answer(
+        "✅ Savolingiz adminga yuborildi.\n"
+        "Admin javobini kuting.",
+        reply_markup=user_keyboard()
+    )
+
+
+# ============================================================
+# 18. ADMIN JAVOB BERISH
+# ============================================================
+
+class AdminReplyStates(StatesGroup):
+    waiting_reply = State()
+
+
+@dp.callback_query(F.data.startswith("reply_"))
+async def admin_reply_start(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[1])
+    except Exception:
+        await callback.answer("Xatolik.")
+        return
+
+    await state.update_data(reply_user_id=user_id)
+    await state.set_state(AdminReplyStates.waiting_reply)
+
+    await callback.message.answer(
+        "💬 Foydalanuvchiga yubormoqchi bo‘lgan javobingizni yozing."
+    )
+
+    await callback.answer()
+
+
+@dp.message(AdminReplyStates.waiting_reply)
+async def admin_send_reply(
+    message: Message,
+    state: FSMContext
+):
     if not is_admin(message.from_user.id):
         return
-    user_id = admin_reply_targets.get(message.from_user.id)
+
+    data = await state.get_data()
+    user_id = data.get("reply_user_id")
+
     if not user_id:
         await state.clear()
         return
+
     try:
-        await bot.copy_message(user_id, message.chat.id, message.message_id)
-        await message.answer(TEXTS["uz"]["reply_sent"], reply_markup=admin_keyboard())
+        await bot.send_message(
+            user_id,
+            "👨‍💼 <b>Admin javobi:</b>\n\n"
+            f"{escape(message.text or '')}"
+        )
+
+        await message.answer(
+            "✅ Javob foydalanuvchiga yuborildi."
+        )
+
+        conn = db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO conversations(user_id, active, topic)
+            VALUES (?, 1, 'admin')
+            ON CONFLICT(user_id)
+            DO UPDATE SET active = 1
+        """, (user_id,))
+
+        conn.commit()
+        conn.close()
+
     except Exception as e:
-        logging.error("Reply error: %s", e)
-        await message.answer(TEXTS["uz"]["reply_failed"], reply_markup=admin_keyboard())
-    admin_reply_targets.pop(message.from_user.id, None)
+        await message.answer(
+            f"❌ Xatolik: {escape(str(e))}"
+        )
+
     await state.clear()
 
-# =========================================================
-# ADMIN BACK
-# =========================================================
-@dp.message(F.text == "⬅️ Foydalanuvchi menyusi")
-async def admin_to_user_menu(message: Message):
+
+# ============================================================
+# 19. FOYDALANUVCHINING ADMIN BILAN DAVOMLI SUHBATI
+# ============================================================
+
+@dp.message()
+async def general_user_message(message: Message):
+    if is_admin(message.from_user.id):
+        return
+
+    if not message.text:
+        return
+
+    text = message.text.strip()
+
+    # Menyu tugmalarini o'tkazib yuboramiz
+    menu_buttons = {
+        "📌 Loyihalar",
+        "🗳 Ovoz berish",
+        "💰 Balans",
+        "💳 Pul yechish",
+        "👥 Do‘stlarni taklif qilish",
+        "❓ Savol-javob",
+        "👨‍💼 Admin bilan bog‘lanish"
+    }
+
+    if text in menu_buttons:
+        return
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT active FROM conversations WHERE user_id = ?",
+        (message.from_user.id,)
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    if row and row[0] == 1:
+        for admin_id in ADMIN_IDS:
+            try:
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="💬 Javob berish",
+                                callback_data=f"reply_{message.from_user.id}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="🔴 Suhbatni yopish",
+                                callback_data=f"close_{message.from_user.id}"
+                            )
+                        ]
+                    ]
+                )
+
+                await bot.send_message(
+                    admin_id,
+                    "💬 <b>Foydalanuvchidan yangi xabar</b>\n\n"
+                    f"👤 {escape(message.from_user.full_name)}\n"
+                    f"🆔 <code>{message.from_user.id}</code>\n\n"
+                    f"{escape(text)}",
+                    reply_markup=keyboard
+                )
+
+            except Exception as e:
+                logger.error(e)
+
+        await message.answer(
+            "✅ Xabaringiz adminga yuborildi.",
+            reply_markup=user_keyboard()
+        )
+
+
+# ============================================================
+# 20. SUHBATNI YOPISH
+# ============================================================
+
+@dp.callback_query(F.data.startswith("close_"))
+async def close_conversation(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True
+        )
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[1])
+    except Exception:
+        await callback.answer("Xatolik.")
+        return
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE conversations
+        SET active = 0
+        WHERE user_id = ?
+    """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    try:
+        await bot.send_message(
+            user_id,
+            "🔴 <b>Admin suhbatni yopdi.</b>\n\n"
+            "Yangi savol bo‘lsa, ❓ Savol-javob tugmasidan foydalaning.",
+            reply_markup=user_keyboard()
+        )
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        "✅ Suhbat yopildi."
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# 21. DO‘STLARNI TAKLIF QILISH
+# ============================================================
+
+@dp.message(F.text == "👥 Do‘stlarni taklif qilish")
+async def referral_handler(message: Message):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("referral")
+
+    user = get_user(message.from_user.id)
+
+    if not user:
+        add_user(
+            message.from_user.id,
+            message.from_user.username or "",
+            message.from_user.first_name or ""
+        )
+
+    bot_info = await bot.get_me()
+
+    link = (
+        f"https://t.me/{bot_info.username}"
+        f"?start={message.from_user.id}"
+    )
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT referral_count
+        FROM users
+        WHERE user_id = ?
+    """, (message.from_user.id,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    referral_count = row[0] if row else 0
+
+    await message.answer(
+        "👥 <b>Do‘stlarni taklif qilish</b>\n\n"
+        f"🔗 Sizning havolangiz:\n{link}\n\n"
+        f"👤 Taklif qilgan do‘stlaringiz: <b>{referral_count}</b>\n"
+        f"💰 Har bir muvaffaqiyatli taklif uchun: <b>{REFERRAL_BONUS:,} so‘m</b>\n\n"
+        "Do‘stlaringizni shu havola orqali botga taklif qiling.",
+        reply_markup=user_keyboard()
+    )
+
+
+# ============================================================
+# 22. PUL YECHISH
+# ============================================================
+
+class WithdrawStates(StatesGroup):
+    waiting_card = State()
+
+
+@dp.message(F.text == "💳 Pul yechish")
+async def withdraw_start(
+    message: Message,
+    state: FSMContext
+):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("pul_yechish")
+
+    balance = get_balance(message.from_user.id)
+
+    if balance < MIN_WITHDRAW:
+        await message.answer(
+            "❌ <b>Sizning balansingizda yetarli mablag‘ yo‘q.</b>\n\n"
+            "Ko‘proq referral orqali balansingizni to‘ldiring.\n\n"
+            f"💰 Hozirgi balans: <b>{balance:,} so‘m</b>\n"
+            f"💳 Minimal yechish: <b>{MIN_WITHDRAW:,} so‘m</b>",
+            reply_markup=user_keyboard()
+        )
+        return
+
+    await state.set_state(WithdrawStates.waiting_card)
+
+    await message.answer(
+        f"💳 <b>Pul yechish</b>\n\n"
+        f"Balansingiz: <b>{balance:,} so‘m</b>\n\n"
+        "Karta raqamingizni yuboring:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(
+                        text="❌ Bekor qilish"
+                    )
+                ]
+            ],
+            resize_keyboard=True
+        )
+    )
+
+
+@dp.message(WithdrawStates.waiting_card)
+async def receive_card(
+    message: Message,
+    state: FSMContext
+):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+
+        await message.answer(
+            "❌ Bekor qilindi.",
+            reply_markup=user_keyboard()
+        )
+        return
+
+    card = re.sub(r"\D", "", message.text or "")
+
+    if len(card) < 12 or len(card) > 19:
+        await message.answer(
+            "❗ Karta raqami noto‘g‘ri.\n"
+            "Iltimos, karta raqamingizni qayta yuboring."
+        )
+        return
+
+    balance = get_balance(message.from_user.id)
+
+    if balance < MIN_WITHDRAW:
+        await state.clear()
+
+        await message.answer(
+            "❌ Balansingiz yetarli emas.",
+            reply_markup=user_keyboard()
+        )
+        return
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO withdrawals(
+            user_id,
+            card_number,
+            amount,
+            status
+        )
+        VALUES (?, ?, ?, 'pending')
+    """, (
+        message.from_user.id,
+        card,
+        balance
+    ))
+
+    conn.commit()
+    conn.close()
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Pul yechish so‘rovingiz qabul qilindi.\n\n"
+        "📨 Admin ko‘rib chiqadi.",
+        reply_markup=user_keyboard()
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💬 Javob berish",
+                            callback_data=f"reply_{message.from_user.id}"
+                        )
+                    ]
+                ]
+            )
+
+            await bot.send_message(
+                admin_id,
+                "💳 <b>Yangi pul yechish so‘rovi</b>\n\n"
+                f"👤 {escape(message.from_user.full_name)}\n"
+                f"🆔 <code>{message.from_user.id}</code>\n"
+                f"💰 Summa: <b>{balance:,} so‘m</b>\n"
+                f"💳 Karta: <code>{card}</code>",
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+            logger.error(e)
+
+
+# ============================================================
+# 23. ADMIN BILAN BOG‘LANISH
+# ============================================================
+
+@dp.message(F.text == "👨‍💼 Admin bilan bog‘lanish")
+async def contact_admin(message: Message):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("admin_contact")
+
+    contact = get_setting("admin_contact", "")
+
+    if contact:
+        await message.answer(
+            "👨‍💼 <b>Admin bilan bog‘lanish</b>\n\n"
+            f"{escape(contact)}",
+            reply_markup=user_keyboard()
+        )
+    else:
+        await message.answer(
+            "ℹ️ Hozircha admin qo‘shilmagan yoki barcha adminlar band.",
+            reply_markup=user_keyboard()
+        )
+
+
+# ============================================================
+# 24. LOYIHALAR
+# ============================================================
+
+@dp.message(F.text == "📌 Loyihalar")
+async def projects_handler(message: Message):
+    if is_admin(message.from_user.id):
+        return
+
+    count_button("loyihalar")
+
+    link = get_setting("project_link", "")
+    name = get_setting("project_name", "")
+
+    if not link:
+        await message.answer(
+            "📌 <b>Loyihalar</b>\n\n"
+            "Hozircha loyiha qo‘shilmagan.",
+            reply_markup=user_keyboard()
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=name or "🔗 Loyihaga kirish",
+                    url=link
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        "📌 <b>Loyiha</b>\n\n"
+        f"{escape(name or 'Loyiha')}",
+        reply_markup=keyboard
+    )
+
+
+# ============================================================
+# 25. ADMIN - STATISTIKA
+# ============================================================
+
+@dp.message(F.text == "📊 Statistika")
+async def admin_statistics(message: Message):
     if not is_admin(message.from_user.id):
         return
-    await message.answer(TEXTS["uz"]["welcome"], reply_markup=user_keyboard_uz())
 
-@dp.message(F.text == "⬅️ Orqaga")
-async def simple_back(message: Message):
-    lang = get_language(message.from_user.id)
-    await message.answer(TEXTS[lang]["welcome"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
+    conn = db()
+    cur = conn.cursor()
 
-# =========================================================
-# UNKNOWN
-# =========================================================
-@dp.message()
-async def unknown_handler(message: Message):
-    user_id = message.from_user.id
-    if is_admin(user_id):
-        await message.answer("👑 Admin panel uchun /admin buyrug‘idan foydalaning.", reply_markup=admin_keyboard())
+    cur.execute("SELECT COUNT(*) FROM users")
+    users = cur.fetchone()[0]
+
+    cur.execute("SELECT COALESCE(SUM(balance), 0) FROM users")
+    balance = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM votes")
+    votes = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM votes WHERE vote_type = 'phone'"
+    )
+    phone_votes = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM referrals")
+    referrals = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COALESCE(SUM(bonus), 0) FROM referrals"
+    )
+    referral_money = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM withdrawals WHERE status = 'pending'"
+    )
+    pending_withdrawals = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM conversations WHERE active = 1"
+    )
+    active_chats = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM withdrawals"
+    )
+    all_withdrawals = cur.fetchone()[0]
+
+    conn.close()
+
+    await message.answer(
+        "📊 <b>BOT STATISTIKASI</b>\n\n"
+        f"👥 Jami foydalanuvchilar: <b>{users}</b>\n"
+        f"🗳 Jami ovoz so‘rovlari: <b>{votes}</b>\n"
+        f"📞 Telefon orqali ovozlar: <b>{phone_votes}</b>\n"
+        f"👥 Referral takliflar: <b>{referrals}</b>\n"
+        f"💰 Referral bonuslari: <b>{referral_money:,} so‘m</b>\n"
+        f"💵 Jami balanslar: <b>{balance:,} so‘m</b>\n"
+        f"💳 Pul yechish so‘rovlari: <b>{all_withdrawals}</b>\n"
+        f"⏳ Kutilayotgan yechishlar: <b>{pending_withdrawals}</b>\n"
+        f"💬 Faol suhbatlar: <b>{active_chats}</b>",
+        reply_markup=admin_keyboard()
+    )
+
+
+# ============================================================
+# 26. ADMIN - FOYDALANUVCHILAR
+# ============================================================
+
+@dp.message(F.text == "👥 Foydalanuvchilar")
+async def admin_users(message: Message):
+    if not is_admin(message.from_user.id):
         return
-    lang = get_language(user_id)
-    await message.answer(TEXTS[lang]["unknown"], reply_markup=user_keyboard_uz() if lang == "uz" else user_keyboard_ru())
 
-# =========================================================
-# RUN
-# =========================================================
-async def main():
-    print("========================================", flush=True)
-    print("OPEN BUDGET BOT ISHLAMOQDA", flush=True)
-    print("========================================", flush=True)
-    init_db()
-    if not BOT_TOKEN or BOT_TOKEN.startswith("BU_YERGA_"):
-        raise RuntimeError("BOT_TOKEN noto‘g‘ri. main.py ichidagi BOT_TOKEN joyiga YANGI BotFather tokenini yozing.")
-    bot = Bot(token=BOT_TOKEN)
-    me = await bot.get_me()
-    print(f"Bot ulandi: @{me.username}", flush=True)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    conn = db()
+    cur = conn.cursor()
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Bot to‘xtatildi.")
+    cur.execute("""
+        SELECT user_id, first_name, username, balance
+        FROM users
+        ORDER BY created_at DESC
+        LIMIT 20
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await message.answer(
+            "👥 Hozircha foydal
