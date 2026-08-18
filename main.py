@@ -18,7 +18,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-BOT_TOKEN = "8615736731:AAF7LGgYsKCq_JjV9qFPmFV6psTAS4mlQ_g"
+BOT_TOKEN = "8615736731:AAGQ9TR4XdX-y-X1XbRbmM9evTk3iMtL5GU"
 
 ADMIN_IDS = {7998053914}
 
