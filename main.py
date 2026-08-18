@@ -31,7 +31,7 @@ from aiogram.types import (
 # CONFIG
 # ============================================================
 
-BOT_TOKEN = os.getenv("BOT_ТОКЕН").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 ADMIN_IDS = {
     int(x.strip())
