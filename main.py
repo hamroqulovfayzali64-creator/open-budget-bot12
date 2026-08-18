@@ -1,3 +1,9 @@
+# ============================================================
+# MAIN.PY — TELEGRAM BOT
+# Stable SQLite WAL / Referral / Voting / Admin / Q&A
+# Railway-ready
+# ============================================================
+
 import asyncio
 import logging
 import os
@@ -24,11 +30,9 @@ from aiogram.types import (
 # ============================================================
 # CONFIG
 # ============================================================
-# Railway -> Variables -> BOT_TOKEN ga yangi bot tokenni yozing.
-# Eski tokenni kodga joylashtirmang.
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Bir nechta admin kerak bo'lsa: "123,456,789"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8615736731:AAGQ9TR4XdX-y-X1XbRbmM9evTk3iMtL5GU").strip()
+
 ADMIN_IDS = {
     int(x.strip())
     for x in os.getenv("ADMIN_IDS", "7998053914").split(",")
@@ -49,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 if not BOT_TOKEN:
     raise RuntimeError(
-        "BOT_TOKEN topilmadi. Railway Variables bo'limiga BOT_TOKEN qo'shing."
+        "BOT_TOKEN topilmadi. Railway -> Variables -> BOT_TOKEN qo'shing."
     )
 
 bot = Bot(
@@ -62,6 +66,7 @@ dp = Dispatcher()
 # ============================================================
 # STATES
 # ============================================================
+
 class UserStates(StatesGroup):
     question = State()
     phone = State()
@@ -81,13 +86,20 @@ class AdminStates(StatesGroup):
 # ============================================================
 # DATABASE
 # ============================================================
+
 def db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn = sqlite3.connect(
+        DB_NAME,
+        timeout=30,
+        isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
+
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
+
     return conn
 
 
@@ -98,8 +110,8 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 username TEXT DEFAULT '',
                 first_name TEXT DEFAULT '',
-                balance INTEGER DEFAULT 0,
-                referrals INTEGER DEFAULT 0,
+                balance INTEGER NOT NULL DEFAULT 0,
+                referrals INTEGER NOT NULL DEFAULT 0,
                 referred_by INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -110,7 +122,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 url TEXT DEFAULT '',
-                active INTEGER DEFAULT 1
+                active INTEGER NOT NULL DEFAULT 1
             )
         """)
 
@@ -120,8 +132,8 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 vote_type TEXT NOT NULL,
                 phone TEXT DEFAULT '',
-                status TEXT DEFAULT 'pending',
-                reward INTEGER DEFAULT 30000,
+                status TEXT NOT NULL DEFAULT 'pending',
+                reward INTEGER NOT NULL DEFAULT 30000,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -130,7 +142,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS used_phones (
                 phone TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
-                vote_id INTEGER NOT NULL
+                vote_id INTEGER NOT NULL UNIQUE
             )
         """)
 
@@ -139,7 +151,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 inviter_id INTEGER NOT NULL,
                 invited_id INTEGER UNIQUE NOT NULL,
-                reward INTEGER DEFAULT 10000,
+                reward INTEGER NOT NULL DEFAULT 10000,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -150,7 +162,7 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 amount INTEGER NOT NULL,
                 card_number TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
+                status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -158,7 +170,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS chats (
                 user_id INTEGER PRIMARY KEY,
-                status TEXT DEFAULT 'closed',
+                status TEXT NOT NULL DEFAULT 'closed',
                 admin_id INTEGER
             )
         """)
@@ -181,30 +193,26 @@ def init_db():
             )
         """)
 
-        # Foydali indekslar: ko'p foydalanuvchida qidiruvni tezlashtiradi.
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_votes_user
-            ON votes(user_id)
-        """)
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_votes_status
-            ON votes(status)
-        """)
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_direction
-            ON messages(direction)
-        """)
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_withdrawals_status
-            ON withdrawals(status)
-        """)
+        # Indexlar
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_votes_user ON votes(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_votes_status ON votes(status)",
+            "CREATE INDEX IF NOT EXISTS idx_votes_type_status ON votes(vote_type, status)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)",
+            "CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)",
+            "CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id)",
+        ]
 
-        c.commit()
+        for query in indexes:
+            c.execute(query)
 
 
 # ============================================================
 # HELPERS
 # ============================================================
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
@@ -230,17 +238,19 @@ def set_setting(key: str, value: str):
             ON CONFLICT(key)
             DO UPDATE SET value=excluded.value
         """, (key, value))
-        c.commit()
 
 
 def add_user(user, referred_by=None) -> bool:
+    if referred_by == user.id:
+        referred_by = None
+
     with closing(db()) as c:
-        old = c.execute(
+        row = c.execute(
             "SELECT user_id FROM users WHERE user_id=?",
             (user.id,),
         ).fetchone()
 
-        if old:
+        if row:
             c.execute("""
                 UPDATE users
                 SET username=?, first_name=?
@@ -250,11 +260,7 @@ def add_user(user, referred_by=None) -> bool:
                 user.first_name or "",
                 user.id,
             ))
-            c.commit()
             return False
-
-        if referred_by == user.id:
-            referred_by = None
 
         c.execute("""
             INSERT INTO users(
@@ -267,7 +273,6 @@ def add_user(user, referred_by=None) -> bool:
             user.first_name or "",
             referred_by,
         ))
-        c.commit()
         return True
 
 
@@ -314,6 +319,7 @@ async def safe_send(user_id: int, text: str, **kwargs) -> bool:
 # ============================================================
 # KEYBOARDS
 # ============================================================
+
 def user_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -474,8 +480,9 @@ def withdraw_kb(withdraw_id: int):
 
 
 # ============================================================
-# START / ADMIN
+# START
 # ============================================================
+
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -524,7 +531,6 @@ async def start_handler(message: Message, state: FSMContext):
                     REFERRAL_REWARD,
                     referred_by,
                 ))
-                c.commit()
 
                 await safe_send(
                     referred_by,
@@ -574,8 +580,9 @@ async def user_menu(message: Message, state: FSMContext):
 
 
 # ============================================================
-# USER: PROOF CHANNEL
+# PROOF CHANNEL
 # ============================================================
+
 @dp.message(F.text == "📢 Isbot kanali")
 async def proof_channel_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -628,6 +635,7 @@ async def proof_channel_handler(message: Message, state: FSMContext):
 # ============================================================
 # PROJECTS
 # ============================================================
+
 @dp.message(F.text == "📌 Loyihalar")
 async def projects_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -672,6 +680,7 @@ async def projects_handler(message: Message, state: FSMContext):
 
     for row in rows:
         text += f"🔹 <b>{escape(row['name'])}</b>\n\n"
+
         if row["url"]:
             buttons.append([
                 InlineKeyboardButton(
@@ -690,8 +699,9 @@ async def projects_handler(message: Message, state: FSMContext):
 
 
 # ============================================================
-# USER: VOTE
+# USER VOTING
 # ============================================================
+
 @dp.message(F.text == "🗳 Ovoz berish")
 async def vote_start(message: Message, state: FSMContext):
     await state.clear()
@@ -711,7 +721,10 @@ async def vote_link_callback(
     state: FSMContext,
 ):
     if is_admin(callback.from_user.id):
-        await callback.answer("Admin uchun mavjud emas.", show_alert=True)
+        await callback.answer(
+            "Admin uchun mavjud emas.",
+            show_alert=True,
+        )
         return
 
     await state.clear()
@@ -726,8 +739,6 @@ async def vote_link_callback(
         )
         return
 
-    # Bir foydalanuvchining bir vaqtning o'zida ko'payib ketgan
-    # pending link vote'larini cheklaymiz.
     with closing(db()) as c:
         pending = c.execute("""
             SELECT id
@@ -758,10 +769,10 @@ async def vote_link_callback(
             callback.from_user.id,
             VOTE_REWARD,
         ))
+
         vote_id = c.execute(
             "SELECT last_insert_rowid()"
         ).fetchone()[0]
-        c.commit()
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -794,7 +805,10 @@ async def vote_link_callback(
 @dp.callback_query(F.data.startswith("link_done:"))
 async def link_done_callback(callback: CallbackQuery):
     if is_admin(callback.from_user.id):
-        await callback.answer("Admin uchun mavjud emas.", show_alert=True)
+        await callback.answer(
+            "Admin uchun mavjud emas.",
+            show_alert=True,
+        )
         return
 
     try:
@@ -827,7 +841,11 @@ async def link_done_callback(callback: CallbackQuery):
 
     await callback.answer("Qabul qilindi.")
 
-    await callback.message.edit_reply_markup(reply_markup=None)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     await callback.message.answer(
         "✅ <b>Ovoz haqidagi arizangiz adminga yuborildi.</b>\n\n"
         "Admin tekshirganidan keyin balansingizga mukofot qo‘shiladi.",
@@ -835,6 +853,7 @@ async def link_done_callback(callback: CallbackQuery):
     )
 
     user = callback.from_user
+
     admin_text = (
         "🔗 <b>YANGI HAVOLA OVOZI</b>\n\n"
         f"👤 Ism: {escape(user.first_name or '')}\n"
@@ -858,7 +877,10 @@ async def vote_phone_callback(
     state: FSMContext,
 ):
     if is_admin(callback.from_user.id):
-        await callback.answer("Admin uchun mavjud emas.", show_alert=True)
+        await callback.answer(
+            "Admin uchun mavjud emas.",
+            show_alert=True,
+        )
         return
 
     await state.set_state(UserStates.phone)
@@ -937,7 +959,6 @@ async def phone_received(message: Message, state: FSMContext):
             ON CONFLICT(user_id)
             DO UPDATE SET status='open'
         """, (message.from_user.id,))
-        c.commit()
 
     await state.clear()
 
@@ -950,6 +971,7 @@ async def phone_received(message: Message, state: FSMContext):
     )
 
     user = message.from_user
+
     admin_text = (
         "📱 <b>YANGI TELEFON OVOZI</b>\n\n"
         f"👤 Ism: {escape(user.first_name or '')}\n"
@@ -969,8 +991,9 @@ async def phone_received(message: Message, state: FSMContext):
 
 
 # ============================================================
-# USER: BALANCE / REFERRAL / WITHDRAW
+# BALANCE / REFERRAL / WITHDRAW
 # ============================================================
+
 @dp.message(F.text == "💰 Balans")
 async def balance_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -1062,6 +1085,22 @@ async def withdraw_start(message: Message, state: FSMContext):
         )
         return
 
+    with closing(db()) as c:
+        pending = c.execute("""
+            SELECT id
+            FROM withdrawals
+            WHERE user_id=? AND status='pending'
+            LIMIT 1
+        """, (message.from_user.id,)).fetchone()
+
+    if pending:
+        await message.answer(
+            "⏳ Sizda allaqachon ko‘rib chiqilayotgan "
+            "pul yechish arizasi bor.",
+            reply_markup=user_kb(),
+        )
+        return
+
     await state.set_state(UserStates.card)
 
     await message.answer(
@@ -1083,6 +1122,21 @@ async def card_received(message: Message, state: FSMContext):
         return
 
     with closing(db()) as c:
+        pending = c.execute("""
+            SELECT id
+            FROM withdrawals
+            WHERE user_id=? AND status='pending'
+            LIMIT 1
+        """, (message.from_user.id,)).fetchone()
+
+        if pending:
+            await state.clear()
+            await message.answer(
+                "⏳ Sizda allaqachon kutilayotgan ariza bor.",
+                reply_markup=user_kb(),
+            )
+            return
+
         user = c.execute(
             "SELECT balance FROM users WHERE user_id=?",
             (message.from_user.id,),
@@ -1096,22 +1150,18 @@ async def card_received(message: Message, state: FSMContext):
             )
             return
 
-        # Ariza yaratilganda balansni band qilamiz:
-        # shu bilan bir foydalanuvchi bir vaqtning o'zida
-        # bir nechta ariza bilan bir balansni yecha olmaydi.
         amount = int(user["balance"])
 
-        c.execute("""
+        updated = c.execute("""
             UPDATE users
             SET balance=0
-            WHERE user_id=?
-              AND balance>=?
+            WHERE user_id=? AND balance>=?
         """, (
             message.from_user.id,
             MIN_WITHDRAW,
         ))
 
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             await state.clear()
             await message.answer(
                 "❌ Balans o‘zgarib ketdi. Qaytadan urinib ko‘ring.",
@@ -1133,7 +1183,6 @@ async def card_received(message: Message, state: FSMContext):
         withdrawal_id = c.execute(
             "SELECT last_insert_rowid()"
         ).fetchone()[0]
-        c.commit()
 
     await state.clear()
 
@@ -1146,6 +1195,7 @@ async def card_received(message: Message, state: FSMContext):
     )
 
     user_obj = message.from_user
+
     admin_text = (
         "💳 <b>YANGI PUL YECHISH ARIZASI</b>\n\n"
         f"👤 Ism: {escape(user_obj.first_name or '')}\n"
@@ -1165,8 +1215,9 @@ async def card_received(message: Message, state: FSMContext):
 
 
 # ============================================================
-# USER: Q&A / ADMIN CONTACT
+# Q&A / ADMIN CONTACT
 # ============================================================
+
 @dp.message(F.text == "❓ Savol-javob")
 async def question_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1175,6 +1226,7 @@ async def question_start(message: Message, state: FSMContext):
         return
 
     await state.set_state(UserStates.question)
+
     await message.answer(
         "❓ <b>Savolingizni yozing.</b>\n\n"
         "Savolingiz adminlarga yuboriladi."
@@ -1190,6 +1242,7 @@ async def question_received(message: Message, state: FSMContext):
         return
 
     await state.clear()
+
     user = message.from_user
 
     with closing(db()) as c:
@@ -1209,7 +1262,6 @@ async def question_received(message: Message, state: FSMContext):
             ON CONFLICT(user_id)
             DO UPDATE SET status='open'
         """, (user.id,))
-        c.commit()
 
     for admin_id in ADMIN_IDS:
         await safe_send(
@@ -1258,7 +1310,10 @@ async def user_reply_callback(
     state: FSMContext,
 ):
     if is_admin(callback.from_user.id):
-        await callback.answer("Admin uchun emas.", show_alert=True)
+        await callback.answer(
+            "Admin uchun emas.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
@@ -1276,14 +1331,16 @@ async def user_reply_callback(
 
     await state.set_state(UserStates.question)
     await callback.answer()
+
     await callback.message.answer(
         "💬 <b>Xabaringizni yozing.</b>"
     )
 
 
 # ============================================================
-# ADMIN: STATISTICS / USERS / VOTES / REFERRALS / WITHDRAWALS
+# ADMIN STATISTICS
 # ============================================================
+
 @dp.message(F.text == "📊 Statistika")
 async def statistics(message: Message, state: FSMContext):
     await state.clear()
@@ -1329,7 +1386,8 @@ async def statistics(message: Message, state: FSMContext):
         ).fetchone()["n"]
 
         pending_withdrawals = c.execute(
-            "SELECT COUNT(*) AS n FROM withdrawals WHERE status='pending'"
+            "SELECT COUNT(*) AS n "
+            "FROM withdrawals WHERE status='pending'"
         ).fetchone()["n"]
 
         paid_money = c.execute(
@@ -1575,8 +1633,9 @@ async def admin_questions(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ADMIN: SETTINGS
+# ADMIN SETTINGS
 # ============================================================
+
 @dp.message(F.text == "🔗 Ovoz havolasi")
 async def vote_url_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1681,8 +1740,9 @@ async def proof_channel_save(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ADMIN: PROJECT
+# ADMIN PROJECT
 # ============================================================
+
 @dp.message(F.text == "➕ Loyiha qo‘shish")
 async def project_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1752,7 +1812,6 @@ async def project_url_received(
             "INSERT INTO projects(name,url,active) VALUES(?,?,1)",
             (name, url),
         )
-        c.commit()
 
     await state.clear()
 
@@ -1765,8 +1824,9 @@ async def project_url_received(
 
 
 # ============================================================
-# ADMIN: BROADCAST
+# BROADCAST
 # ============================================================
+
 @dp.message(F.text == "📢 Reklama")
 async def broadcast_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1805,12 +1865,14 @@ async def broadcast_received(
     sent = 0
     failed = 0
 
-    # Telegram flood limitiga yaqinlashmaslik uchun kichik interval.
+    # Juda katta auditoriyada Telegram flood limitini kamaytirish
+    # uchun xabarlar orasida qisqa tanaffus.
     for row in users:
         if await safe_send(row["user_id"], text):
             sent += 1
         else:
             failed += 1
+
         await asyncio.sleep(0.05)
 
     await state.clear()
@@ -1824,21 +1886,28 @@ async def broadcast_received(
 
 
 # ============================================================
-# ADMIN: REPLY / CHAT
+# ADMIN CHAT / REPLY
 # ============================================================
+
 @dp.callback_query(F.data.startswith("reply:"))
 async def admin_reply_start(
     callback: CallbackQuery,
     state: FSMContext,
 ):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
         user_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Foydalanuvchi ID xato.", show_alert=True)
+        await callback.answer(
+            "Foydalanuvchi ID xato.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
@@ -1859,6 +1928,7 @@ async def admin_reply_start(
     await state.update_data(reply_user_id=user_id)
 
     await callback.answer()
+
     await callback.message.answer(
         f"💬 <b>Foydalanuvchi {user_id} ga javob yozing.</b>\n\n"
         "Keyingi yuborgan matningiz foydalanuvchiga yuboriladi."
@@ -1916,14 +1986,14 @@ async def admin_reply(
         ))
 
         c.execute("""
-            UPDATE chats
-            SET status='open', admin_id=?
-            WHERE user_id=?
+            INSERT INTO chats(user_id,status,admin_id)
+            VALUES(?, 'open', ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET status='open', admin_id=excluded.admin_id
         """, (
-            message.from_user.id,
             user_id,
+            message.from_user.id,
         ))
-        c.commit()
 
     sent = await safe_send(
         user_id,
@@ -1941,8 +2011,8 @@ async def admin_reply(
         )
     else:
         await message.answer(
-            "⚠️ Javob yuborilmadi. Foydalanuvchi botni bloklagan "
-            "bo‘lishi mumkin.",
+            "⚠️ Javob yuborilmadi. Foydalanuvchi botni "
+            "bloklagan bo‘lishi mumkin.",
             reply_markup=admin_kb(),
         )
 
@@ -1950,7 +2020,10 @@ async def admin_reply(
 @dp.callback_query(F.data.startswith("close:"))
 async def close_chat_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
@@ -1969,11 +2042,13 @@ async def close_chat_callback(callback: CallbackQuery):
             user_id,
             callback.from_user.id,
         ))
-        c.commit()
 
     await callback.answer("Suhbat yopildi.")
+
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
     except Exception:
         pass
 
@@ -1985,21 +2060,32 @@ async def close_chat_callback(callback: CallbackQuery):
 
 
 # ============================================================
-# ADMIN: VOTE APPROVE / REJECT
+# VOTE APPROVE / REJECT
 # ============================================================
+
 @dp.callback_query(F.data.startswith("va:"))
 async def vote_approve(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
         vote_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ovoz ID xato.", show_alert=True)
+        await callback.answer(
+            "Ovoz ID xato.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
+        # BEGIN IMMEDIATE bir vaqtning o'zida ikki admin
+        # tasdiqlashining oldini oladi.
+        c.execute("BEGIN IMMEDIATE")
+
         vote = c.execute("""
             SELECT id, user_id, vote_type, phone, reward, status
             FROM votes
@@ -2007,6 +2093,7 @@ async def vote_approve(callback: CallbackQuery):
         """, (vote_id,)).fetchone()
 
         if not vote:
+            c.rollback()
             await callback.answer(
                 "Ovoz topilmadi.",
                 show_alert=True,
@@ -2014,13 +2101,13 @@ async def vote_approve(callback: CallbackQuery):
             return
 
         if vote["status"] != "pending":
+            c.rollback()
             await callback.answer(
                 f"Ovoz allaqachon {vote['status']}.",
                 show_alert=True,
             )
             return
 
-        # Telefon ovozini tasdiqlashda raqamni global band qilamiz.
         if vote["vote_type"] == "phone":
             phone = normalize_phone(vote["phone"])
 
@@ -2030,10 +2117,11 @@ async def vote_approve(callback: CallbackQuery):
             ).fetchone()
 
             if used:
-                c.execute(
-                    "UPDATE votes SET status='rejected' WHERE id=?",
-                    (vote_id,),
-                )
+                c.execute("""
+                    UPDATE votes
+                    SET status='rejected'
+                    WHERE id=? AND status='pending'
+                """, (vote_id,))
                 c.commit()
 
                 await callback.answer(
@@ -2066,14 +2154,13 @@ async def vote_approve(callback: CallbackQuery):
                 vote_id,
             ))
 
-        # Faqat pending holatdagi ovoz tasdiqlanadi.
-        c.execute("""
+        updated = c.execute("""
             UPDATE votes
             SET status='approved'
             WHERE id=? AND status='pending'
         """, (vote_id,))
 
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             c.rollback()
             await callback.answer(
                 "Ovoz boshqa admin tomonidan ko‘rib chiqildi.",
@@ -2081,7 +2168,7 @@ async def vote_approve(callback: CallbackQuery):
             )
             return
 
-        c.execute("""
+        updated_user = c.execute("""
             UPDATE users
             SET balance=balance+?
             WHERE user_id=?
@@ -2089,11 +2176,23 @@ async def vote_approve(callback: CallbackQuery):
             vote["reward"],
             vote["user_id"],
         ))
+
+        if updated_user.rowcount != 1:
+            c.rollback()
+            await callback.answer(
+                "Foydalanuvchi topilmadi.",
+                show_alert=True,
+            )
+            return
+
         c.commit()
 
     await callback.answer("Ovoz tasdiqlandi.")
+
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
     except Exception:
         pass
 
@@ -2114,16 +2213,24 @@ async def vote_approve(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("vr:"))
 async def vote_reject(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
         vote_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ovoz ID xato.", show_alert=True)
+        await callback.answer(
+            "Ovoz ID xato.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
+        c.execute("BEGIN IMMEDIATE")
+
         vote = c.execute("""
             SELECT id, user_id, status
             FROM votes
@@ -2131,6 +2238,7 @@ async def vote_reject(callback: CallbackQuery):
         """, (vote_id,)).fetchone()
 
         if not vote:
+            c.rollback()
             await callback.answer(
                 "Ovoz topilmadi.",
                 show_alert=True,
@@ -2138,23 +2246,35 @@ async def vote_reject(callback: CallbackQuery):
             return
 
         if vote["status"] != "pending":
+            c.rollback()
             await callback.answer(
                 f"Ovoz allaqachon {vote['status']}.",
                 show_alert=True,
             )
             return
 
-        c.execute("""
+        updated = c.execute("""
             UPDATE votes
             SET status='rejected'
             WHERE id=? AND status='pending'
         """, (vote_id,))
+
+        if updated.rowcount != 1:
+            c.rollback()
+            await callback.answer(
+                "Ovoz boshqa admin tomonidan ko‘rib chiqildi.",
+                show_alert=True,
+            )
+            return
+
         c.commit()
 
     await callback.answer("Ovoz rad etildi.")
 
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
     except Exception:
         pass
 
@@ -2171,21 +2291,30 @@ async def vote_reject(callback: CallbackQuery):
 
 
 # ============================================================
-# ADMIN: WITHDRAWAL PAID / REJECTED
+# WITHDRAWAL PAID / REJECTED
 # ============================================================
+
 @dp.callback_query(F.data.startswith("wp:"))
 async def withdrawal_paid(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
         withdrawal_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ariza ID xato.", show_alert=True)
+        await callback.answer(
+            "Ariza ID xato.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
+        c.execute("BEGIN IMMEDIATE")
+
         row = c.execute("""
             SELECT id, user_id, amount, status
             FROM withdrawals
@@ -2193,6 +2322,7 @@ async def withdrawal_paid(callback: CallbackQuery):
         """, (withdrawal_id,)).fetchone()
 
         if not row:
+            c.rollback()
             await callback.answer(
                 "Ariza topilmadi.",
                 show_alert=True,
@@ -2200,19 +2330,20 @@ async def withdrawal_paid(callback: CallbackQuery):
             return
 
         if row["status"] != "pending":
+            c.rollback()
             await callback.answer(
                 f"Ariza allaqachon {row['status']}.",
                 show_alert=True,
             )
             return
 
-        c.execute("""
+        updated = c.execute("""
             UPDATE withdrawals
             SET status='paid'
             WHERE id=? AND status='pending'
         """, (withdrawal_id,))
 
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             c.rollback()
             await callback.answer(
                 "Ariza boshqa admin tomonidan ko‘rib chiqildi.",
@@ -2225,7 +2356,9 @@ async def withdrawal_paid(callback: CallbackQuery):
     await callback.answer("To‘langan deb belgilandi.")
 
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
     except Exception:
         pass
 
@@ -2244,16 +2377,24 @@ async def withdrawal_paid(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("wr:"))
 async def withdrawal_reject(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo‘q.", show_alert=True)
+        await callback.answer(
+            "Ruxsat yo‘q.",
+            show_alert=True,
+        )
         return
 
     try:
         withdrawal_id = int(callback.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await callback.answer("Ariza ID xato.", show_alert=True)
+        await callback.answer(
+            "Ariza ID xato.",
+            show_alert=True,
+        )
         return
 
     with closing(db()) as c:
+        c.execute("BEGIN IMMEDIATE")
+
         row = c.execute("""
             SELECT id, user_id, amount, status
             FROM withdrawals
@@ -2261,6 +2402,7 @@ async def withdrawal_reject(callback: CallbackQuery):
         """, (withdrawal_id,)).fetchone()
 
         if not row:
+            c.rollback()
             await callback.answer(
                 "Ariza topilmadi.",
                 show_alert=True,
@@ -2268,19 +2410,20 @@ async def withdrawal_reject(callback: CallbackQuery):
             return
 
         if row["status"] != "pending":
+            c.rollback()
             await callback.answer(
                 f"Ariza allaqachon {row['status']}.",
                 show_alert=True,
             )
             return
 
-        c.execute("""
+        updated = c.execute("""
             UPDATE withdrawals
             SET status='rejected'
             WHERE id=? AND status='pending'
         """, (withdrawal_id,))
 
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             c.rollback()
             await callback.answer(
                 "Ariza boshqa admin tomonidan ko‘rib chiqildi.",
@@ -2288,7 +2431,6 @@ async def withdrawal_reject(callback: CallbackQuery):
             )
             return
 
-        # Ariza rad etilsa, band qilingan summa balansga qaytariladi.
         c.execute("""
             UPDATE users
             SET balance=balance+?
@@ -2297,12 +2439,15 @@ async def withdrawal_reject(callback: CallbackQuery):
             row["amount"],
             row["user_id"],
         ))
+
         c.commit()
 
     await callback.answer("Ariza rad etildi.")
 
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=None
+        )
     except Exception:
         pass
 
@@ -2322,11 +2467,11 @@ async def withdrawal_reject(callback: CallbackQuery):
 # ============================================================
 # FALLBACK
 # ============================================================
+
 @dp.message()
 async def fallback_handler(message: Message, state: FSMContext):
     current = await state.get_state()
 
-    # State bilan ishlayotgan foydalanuvchini bu yerda bezovta qilmaymiz.
     if current:
         return
 
@@ -2343,12 +2488,14 @@ async def fallback_handler(message: Message, state: FSMContext):
 
 
 # ============================================================
-# STARTUP / SHUTDOWN
+# STARTUP
 # ============================================================
+
 async def main():
     init_db()
 
     me = await bot.get_me()
+
     logger.info(
         "Bot ishga tushdi: @%s | admins=%s | db=%s",
         me.username,
@@ -2356,8 +2503,7 @@ async def main():
         DB_NAME,
     )
 
-    # TelegramConflictError chiqmasligi uchun Railway'da bir xil
-    # bot token bilan ikkinchi polling instance ishlamasin.
+    # Agar webhook qolib ketgan bo‘lsa, pollingga o'tamiz.
     await bot.delete_webhook(drop_pending_updates=False)
 
     await dp.start_polling(
